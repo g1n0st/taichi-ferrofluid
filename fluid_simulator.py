@@ -7,6 +7,7 @@ from project import *
 
 from functools import reduce
 import time
+import numpy as np
 
 ti.init(arch=ti.cpu, kernel_profiler=True)
 
@@ -17,7 +18,7 @@ class FluidSimulator:
         res = (128, 128),
         dt = 1.25e-2,
         substeps = 1,
-        dx = 0.078125,
+        dx = 1.0,
         rho = 1000.0,
         gravity = [0, -9.8],
         real = float):
@@ -174,8 +175,7 @@ class FluidSimulator:
             for I in ti.grouped(self.cell_type):
                 I_1 = I - ti.Vector.unit(self.dim, k)
                 if self.is_fluid(I_1) or self.is_fluid(I):
-                    if self.is_solid(I_1) or self.is_solid(I): self.velocity[k][I] = 0
-                    else: self.velocity[k][I] += scale * (self.pressure[I_1] - self.pressure[I])
+                    self.velocity[k][I] += scale * (self.pressure[I_1] - self.pressure[I])
 
     @ti.func
     def advect(self, I, dst, src, offset, dt):
@@ -193,15 +193,62 @@ class FluidSimulator:
 
     def update_velocity(self):
         for k in range(self.dim):
-            self.velocity[k].copy_from(self.velocity_backup[k])
+            self.velocity[k].copy_from(self.velocity_backup[k]) 
+
+    @ti.kernel
+    def mark_valid(self, k : ti.template()):
+        for I in ti.grouped(self.velocity[k]):
+            # NOTE that the the air-liquid interface is valid
+            I_1 = I - ti.Vector.unit(self.dim, k)
+            if self.is_fluid(I_1) or self.is_fluid(I):
+                self.valid[I] = 1
+            else:
+                self.valid[I] = 0
+
+    @ti.kernel
+    def diffuse_quantity(self, dst : ti.template(), src : ti.template(), valid_dst : ti.template(), valid : ti.template()):
+        for I in ti.grouped(dst):
+            if valid[I] == 0:
+                tot = ti.cast(0, self.real)
+                cnt = 0
+                for offset in ti.static(ti.grouped(ti.ndrange(*((-1, 2), ) * self.dim))):
+                    if valid[I + offset] == 1:
+                        tot += src[I + offset]
+                        cnt += 1
+                if cnt > 0:
+                    dst[I] = tot / ti.cast(cnt, self.real)
+                    valid_dst[I] = 1
+
+    def extrap_velocity(self):
+        for k in range(self.dim):
+            self.mark_valid(k)
+            for i in range(10):
+                self.velocity_backup[k].copy_from(self.velocity[k])
+                self.valid_temp.copy_from(self.valid)
+                self.diffuse_quantity(self.velocity[k], self.velocity_backup[k], self.valid, self.valid_temp)
 
     def substep(self, dt):
         self.advect_markers(dt)
         self.apply_markers()
+
         self.advect_velocity(dt)
         self.update_velocity()
+        self.enforce_boundary()
+
+        mks = max(np.max(self.velocity[0].to_numpy()), np.max(self.velocity[1].to_numpy()))
+        print(f'\033[36mMax advect velocity: {mks}\033[0m')
+
         self.add_gravity(dt)
+        self.enforce_boundary()
+
+        self.extrap_velocity()
+        self.enforce_boundary()
+
         self.solve_pressure(dt)
+        
+        prs = np.max(self.pressure.to_numpy())
+        print(f'\033[36mMax pressure: {prs}\033[0m')
+
         self.apply_pressure(dt)
         self.enforce_boundary()
     
@@ -281,24 +328,42 @@ class Initializer: # tmp initializer
 @ti.data_oriented
 class Visualizer: # tmp visualizer
     def __init__(self):
-        self.gui = ti.GUI("demo", (512, 512))
+        self.res = 512
+        self.gui = ti.GUI("demo", (self.res, self.res))
+        self.color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(self.res, self.res))
+    
+    @ti.kernel
+    def fill_marker(self, dx : ti.template(), p : ti.template()):
+        for i, j in self.color_buffer:
+            x = int((i + 0.5) / self.res * dx)
+            y = int((j + 0.5) / self.res * dx)
 
+            m = (ti.log(min(p[x, y], 100000) + 1) / ti.log(10)) / 5.001
+            self.color_buffer[i, j] = ti.Vector([m, m, m])
+
+
+
+    def visualize(self, simulator):
+        self.fill_marker(simulator.dx * 128, simulator.pressure)
+        img = self.color_buffer.to_numpy()
+        self.gui.set_image(img)
+        self.gui.show()
+
+    '''
     def visualize(self, simulator):
         bg_color = 0x112f41
         particle_color = 0x068587
         particle_radius = 1.0
         pos = simulator.markers.to_numpy()
-        for i in range(pos.shape[0]):
-            pos[i][0] /= 10
-            pos[i][1] /= 10
         
         self.gui.clear(bg_color)
-        self.gui.circles(pos, radius=particle_radius, color=particle_color)
+        self.gui.circles(pos / 128, radius=particle_radius, color=particle_color)
         self.gui.show()
+    '''
 
 if __name__ == '__main__':
     solver = FluidSimulator(2, (128, 128))
-    initializer = Initializer(4, 4, 4.4, 6, 1, 5)
+    initializer = Initializer(4 * 10, 4 * 10, 4.4 * 10, 6 * 10, 1 * 10, 5 * 10)
     visualizer = Visualizer()
     solver.initialize(initializer)
     solver.run(1000, visualizer)
