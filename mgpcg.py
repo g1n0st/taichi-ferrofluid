@@ -113,43 +113,19 @@ class MGPCGPoissonSolver:
             if (I.sum()) & 1 == phase and self.grid_type[l][I] == self.FLUID:
                 self.z[l][I] = (self.r[l][I] - self.neighbor_sum(self.Ax[l], self.z[l], I)) / self.Adiag[l][I]
 
-    @ti.func
-    def B_w(self, x):
-        val = ti.cast(1 / 8, self.real)
-        if x == 0 or x == 1: val = ti.cast(3 / 8, self.real)
-        return val
-        
     @ti.kernel
     def restrict(self, l: ti.template()):
         for I in ti.grouped(self.r[l]):
             if self.grid_type[l][I] == self.FLUID:
                 Az = self.Adiag[l][I] * self.z[l][I]
                 Az += self.neighbor_sum(self.Ax[l], self.z[l], I)
-                res = self.r[l][I] - Az # instant calculate residual to avoid memory-bandwidth
-
-                # (Bu^h)(x) = 1/8u^h(x-3/2h)+3/8u^h(x-h/2)+3/8u^h(x+h/2)+1/8u^h(x+3/2h)=u^2h(x)
-                # R = B @ B @ B
-                I0 = (I - 1) // 2
-                for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2), ) * self.dim))):
-                    w = ti.cast(1.0, self.real)
-                    for k in ti.static(range(self.dim)):
-                        w *= ((I[k] + offset[k]) & 1) / 4 + 1 / 8
-                    self.r[l + 1][I0 + offset] += w * res
-
+                res = self.r[l][I] - Az
+                self.r[l + 1][I // 2] += 0.5 * res
 
     @ti.kernel
     def prolongate(self, l: ti.template()):
-        for I in ti.grouped(self.z[l + 1]):
-            if self.grid_type[l + 1][I] == self.FLUID:      
-                # (Bu^h)(x) = 1/8u^h(x-3/2h)+3/8u^h(x-h/2)+3/8u^h(x+h/2)+1/8u^h(x+3/2h)=u^2h(x)
-                # P^T = 8B @ B @ B
-                I2 = I * 2
-                for offset in ti.static(ti.grouped(ti.ndrange(*((-1, 3), ) * self.dim))):
-                    w = ti.cast(8.0, self.real)
-                    for k in ti.static(range(self.dim)): 
-                        w *= self.B_w(offset[k])
-                    self.z[l][I2 + offset] += w * self.z[l + 1][I]
-
+        for I in ti.grouped(self.z[l]):
+            self.z[l][I] += self.z[l + 1][I // 2]
 
     def v_cycle(self):
         self.z[0].fill(0.0)
@@ -184,7 +160,7 @@ class MGPCGPoissonSolver:
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
 
-        tol = max(abs_tol, initial_rTr * rel_tol)
+        tol = min(abs_tol, initial_rTr * rel_tol)
 
         # self.r = b - Ax = b    since self.x = 0
         # self.p = self.r = self.r + 0 self.p
