@@ -18,42 +18,30 @@ class MGPCGPoissonSolver:
         self.real = real
 
         # rhs of linear system
-        self.b = ti.field(dtype=real) # Ax=b
+        self.b = ti.field(dtype=real, shape=res) # Ax=b
+
+        self.r = [ti.field(dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # residual
+        self.z = [ti.field(dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # M^-1 self.r
 
         # grid type
-        self.grid_type = [ti.field(dtype=ti.i32) 
-                        for _ in range(self.n_mg_levels)]
+        self.grid_type = [ti.field(dtype=ti.i32, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)]
 
         # lhs of linear system and its corresponding form in coarse grids
-        self.Adiag = [ti.field(dtype = real)
-                        for _ in range(self.n_mg_levels)] # A(i,j,k)(i,j,k)
-        self.Ax = [ti.Vector.field(dim, dtype = real)
-                        for _ in range(self.n_mg_levels)] # Ax=A(i,j,k)(i+1,j,k), Ay=A(i,j,k)(i,j+1,k), Az=A(i,j,k)(i,j,k+1)
+        self.Adiag = [ti.field(dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # A(i,j,k)(i,j,k)
+        self.Ax = [ti.Vector.field(dim, dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # Ax=A(i,j,k)(i+1,j,k), Ay=A(i,j,k)(i,j+1,k), Az=A(i,j,k)(i,j,k+1)
         
-        # setup sparse simulation data arrays
-        self.r = [ti.field(dtype = real)
-                        for _ in range(self.n_mg_levels)]       # residual
-        self.z = [ti.field(dtype = real)
-                        for _ in range(self.n_mg_levels)]       # M^-1 self.r
-
-        self.x = ti.field(dtype=real) # solution
-        self.p = ti.field(dtype=real) # conjugate gradient
-        self.Ap = ti.field(dtype=real) # matrix-vector product
-        self.sum = ti.field(dtype=real) # storage for reductions
-        self.alpha = ti.field(dtype=real) # step size
-        self.beta = ti.field(dtype=real) # step size
-
-        indices = ti.ijk if self.dim == 3 else ti.ij
-        self.grid = ti.root.pointer(indices, [res[_] // 4 for _ in range(dim)]).dense(
-            indices, 4).place(self.b, self.x, self.p, self.Ap)
-
-        for l in range(self.n_mg_levels):
-            self.grid = ti.root.pointer(indices,
-                                        [res[_] // (4 * 2**l) for _ in range(dim)]).dense(
-                                            indices,
-                                            4).place(self.grid_type[l], self.Adiag[l], self.Ax[l], self.r[l], self.z[l])
-
-        ti.root.place(self.alpha, self.beta, self.sum)
+        
+        self.x = ti.field(dtype=real, shape=res) # solution
+        self.p = ti.field(dtype=real, shape=res) # conjugate gradient
+        self.Ap = ti.field(dtype=real, shape=res) # matrix-vector product
+        self.sum = ti.field(dtype=real, shape=()) # storage for reductions
+        self.alpha = ti.field(dtype=real, shape=()) # step size
+        self.beta = ti.field(dtype=real, shape=()) # step size
 
     @ti.kernel
     def init_gridtype(self, grid0 : ti.template(), grid : ti.template()):
@@ -120,7 +108,7 @@ class MGPCGPoissonSolver:
                 Az = self.Adiag[l][I] * self.z[l][I]
                 Az += self.neighbor_sum(self.Ax[l], self.z[l], I)
                 res = self.r[l][I] - Az
-                self.r[l + 1][I // 2] += 0.5 * res
+                self.r[l + 1][I // 2] += res
 
     @ti.kernel
     def prolongate(self, l: ti.template()):
@@ -130,7 +118,7 @@ class MGPCGPoissonSolver:
     def v_cycle(self):
         self.z[0].fill(0.0)
         for l in range(self.n_mg_levels - 1):
-            for i in range(self.pre_and_post_smoothing << l):
+            for i in range(self.pre_and_post_smoothing):
                 self.smooth(l, 0)
                 self.smooth(l, 1)
 
@@ -139,28 +127,30 @@ class MGPCGPoissonSolver:
             self.restrict(l)
 
         # solve Az = r on the coarse grid
-        for i in range(self.bottom_smoothing):
+        for i in range(self.bottom_smoothing // 2):
             self.smooth(self.n_mg_levels - 1, 0)
             self.smooth(self.n_mg_levels - 1, 1)
+        for i in range(self.bottom_smoothing // 2):
+            self.smooth(self.n_mg_levels - 1, 1)
+            self.smooth(self.n_mg_levels - 1, 0)
 
         for l in reversed(range(self.n_mg_levels - 1)):
             self.prolongate(l)
-            for i in range(self.pre_and_post_smoothing << l):
+            for i in range(self.pre_and_post_smoothing):
                 self.smooth(l, 1)
                 self.smooth(l, 0)
 
     def solve(self,
               max_iters=-1,
               verbose=False,
-              eps=1e-12,
-              abs_tol=1e-12,
-              rel_tol=1e-12):
+              rel_tol=1e-12,
+              eps=1e-12):
 
         self.r[0].copy_from(self.b)
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
 
-        tol = min(abs_tol, initial_rTr * rel_tol)
+        tol = initial_rTr * rel_tol
 
         # self.r = b - Ax = b    since self.x = 0
         # self.p = self.r = self.r + 0 self.p
@@ -181,10 +171,8 @@ class MGPCGPoissonSolver:
             self.alpha[None] = old_zTr / (pAp + eps)
 
             # self.x = self.x + self.alpha self.p
-            self.update_x()
-
             # self.r = self.r - self.alpha self.Ap
-            self.update_r()
+            self.update_xr()
 
             # check for convergence
             self.reduce(self.r[0], self.r[0])
@@ -221,23 +209,17 @@ class MGPCGPoissonSolver:
     def compute_Ap(self):
         for I in ti.grouped(self.Ap):
             if self.grid_type[0][I] == self.FLUID:
-                self.Ap[I] = self.Adiag[0][I] * self.p[I]
-                for k in ti.static(range(self.dim)):
-                    offset = ti.Vector.unit(self.dim, k)
-                    self.Ap[I] += self.Ax[0][I - offset][k] * self.p[I - offset]
-                    self.Ap[I] += self.Ax[0][I][k] * self.p[I + offset]
+                r = self.Adiag[0][I] * self.p[I]
+                r += self.neighbor_sum(self.Ax[0], self.p, I)
+                self.Ap[I] = r
 
     @ti.kernel
-    def update_x(self):
+    def update_xr(self):
+        alpha = self.alpha[None]
         for I in ti.grouped(self.p):
             if self.grid_type[0][I] == self.FLUID:
-                self.x[I] += self.alpha[None] * self.p[I]
-
-    @ti.kernel
-    def update_r(self):
-        for I in ti.grouped(self.p):
-            if self.grid_type[0][I] == self.FLUID:
-                self.r[0][I] -= self.alpha[None] * self.Ap[I]
+                self.x[I] += alpha * self.p[I]
+                self.r[0][I] -= alpha * self.Ap[I]
 
     @ti.kernel
     def update_p(self):
