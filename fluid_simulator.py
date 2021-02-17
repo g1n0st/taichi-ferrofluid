@@ -175,8 +175,8 @@ class FluidSimulator:
             for I in ti.grouped(self.cell_type):
                 I_1 = I - ti.Vector.unit(self.dim, k)
                 if self.is_fluid(I_1) or self.is_fluid(I):
-                    self.velocity[k][I] += scale * (self.pressure[I_1] - self.pressure[I])
-
+                    if self.is_solid(I_1) or self.is_solid(I): self.velocity[k][I] = 0
+                    else: self.velocity[k][I] += scale * (self.pressure[I_1] - self.pressure[I])
     @ti.func
     def advect(self, I, dst, src, offset, dt):
         pos = (I + offset) * self.dx
@@ -250,6 +250,8 @@ class FluidSimulator:
         print(f'\033[36mMax pressure: {prs}\033[0m')
 
         self.apply_pressure(dt)
+
+        self.extrap_velocity()
         self.enforce_boundary()
     
     def run(self, max_steps, visualizer):
@@ -309,12 +311,12 @@ class Initializer: # tmp initializer
 
     @ti.kernel
     def init_kernel(self, cell_type : ti.template(), dx : ti.template()):
-        xn = int(self.x / dx)
-        yn = int(self.y / dx)
-        x1_ = int(self.x1 / dx)
-        x2_ = int(self.x2 / dx)
-        y1_ = int(self.y1 / dx)
-        y2_ = int(self.y2 / dx)
+        xn = int(self.x)
+        yn = int(self.y)
+        x1_ = int(self.x1)
+        x2_ = int(self.x2)
+        y1_ = int(self.y1)
+        y2_ = int(self.y2)
 
         for i, j in cell_type:
             if i <= xn and j <= yn:
@@ -327,8 +329,10 @@ class Initializer: # tmp initializer
 
 @ti.data_oriented
 class Visualizer: # tmp visualizer
-    def __init__(self):
+    def __init__(self, res, switch = 1):
+        self.grid_res = res
         self.res = 512
+        self.switch = switch
         self.gui = ti.GUI("demo", (self.res, self.res))
         self.color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(self.res, self.res))
     
@@ -338,32 +342,35 @@ class Visualizer: # tmp visualizer
             x = int((i + 0.5) / self.res * dx)
             y = int((j + 0.5) / self.res * dx)
 
-            m = (ti.log(min(p[x, y], 100000) + 1) / ti.log(10)) / 5.001
+            m = (ti.log(min(p[x, y], 100) + 1) / ti.log(10)) / 2.001
             self.color_buffer[i, j] = ti.Vector([m, m, m])
 
-
-
-    def visualize(self, simulator):
+    def visualize_1(self, simulator):
         self.fill_marker(simulator.dx * 128, simulator.pressure)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
         self.gui.show()
-
-    '''
-    def visualize(self, simulator):
-        bg_color = 0x112f41
-        particle_color = 0x068587
+    
+    def visualize_2(self, simulator):
+        bg_color = 0x000000
+        particle_color = 0x0FFFFF
         particle_radius = 1.0
         pos = simulator.markers.to_numpy()
         
         self.gui.clear(bg_color)
-        self.gui.circles(pos / 128, radius=particle_radius, color=particle_color)
+        self.gui.circles(pos / (self.grid_res * simulator.dx), radius=particle_radius, color=particle_color)
         self.gui.show()
-    '''
+
+    def visualize(self, simulator):
+        if self.switch == 1:
+            self.visualize_1(simulator)
+        else:
+            self.visualize_2(simulator)
 
 if __name__ == '__main__':
-    solver = FluidSimulator(2, (128, 128))
-    initializer = Initializer(4 * 10, 4 * 10, 4.4 * 10, 6 * 10, 1 * 10, 5 * 10)
-    visualizer = Visualizer()
+    res = 256
+    solver = FluidSimulator(2, (res, res), 0.01, 1, 10 / res)
+    initializer = Initializer(0.4 * res, 0.4 * res, 0.44 * res, 0.6 * res, 0.1 * res, 0.5 * res)
+    visualizer = Visualizer(res, 2)
     solver.initialize(initializer)
-    solver.run(1000, visualizer)
+    solver.run(-1, visualizer)
