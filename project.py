@@ -32,7 +32,7 @@ class PressureProjectStrategy:
    
     @ti.kernel
     def preconditioner_init(self, dim : ti.template(), l : ti.template(), grid_type : ti.template(), Adiag : ti.template(), Ax : ti.template()):
-        scale = self.scale_A / ((2**l) ** dim)
+        scale = self.scale_A
 
         for I in ti.grouped(grid_type):
             if grid_type[I] == utils.FLUID:
@@ -40,6 +40,9 @@ class PressureProjectStrategy:
                     offset = ti.Vector.unit(dim, k)
                     if grid_type[I - offset] == utils.FLUID: 
                         Adiag[I] += scale
+                    elif grid_type[I - offset] == utils.AIR:
+                        Adiag[I] += scale
+                        Ax[I - offset][k] = -scale
                     if grid_type[I + offset] == utils.FLUID: 
                         Adiag[I] += scale
                         Ax[I][k] = -scale
