@@ -179,10 +179,10 @@ class FluidSimulator:
 
     @ti.func
     def advect(self, I, dst, src, offset, dt):
-        pos = I + offset
+        pos = (I + offset) * self.dx
         midpos = pos - self.vel_interp(pos) * (0.5 * dt)
         p0 = pos - self.vel_interp(midpos) * dt
-        dst[I] = self.sample(src, p0, offset, src.shape)
+        dst[I] = self.sample(src, p0 / self.dx, offset, src.shape)
 
     @ti.kernel
     def advect_velocity(self, dt : ti.f32):
@@ -254,7 +254,7 @@ class FluidSimulator:
     
     def run(self, max_steps, visualizer):
         step = 0
-        while step < max_steps:
+        while step < max_steps or max_steps == -1:
             print(step)
             for substep in range(self.substeps):
                 self.substep(self.dt)
