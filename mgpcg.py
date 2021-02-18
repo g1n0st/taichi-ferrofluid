@@ -30,17 +30,11 @@ class MGPCGPoissonSolver:
                         for l in range(self.n_mg_levels)]
 
         # lhs of linear system and its corresponding form in coarse grids
-        # treat it as a linear operator
-        # L[...][i * 2] = A_(i,j),(i-1,j) or A_(i-1,j,k),(i,j,k)
-        # L[...][i * 2 + 1] = A_(i,j)(i+1,j) or A_(i+1,j,k)(i,j,k)
-        # L[...][j * 2] = A_(i,j),(i,j-1) or A_(i,j,k),(i,j-1,k)
-        # L[...][j * 2 + 1] = A_(i,j)(i,j+1) or A_(i,j,k)(i,j+1,k)
-        # L[...][k * 2] = A_(i,j,k),(i,j,k-1)
-        # L[...][k * 2 + 1] = A_(i,j,k)(i,j,k+1)
-        # L[...][dim * 2] = A_(i,i),(i,i) or A_(i,i,i),(i,i,i)
-        # L[...][dim * 2 + 1] = 1 / A_(i,i),(i,i) or 1 / A_(i,i,i),(i,i,i)
-        self.L = [ti.Vector.field((dim + 1) * 2, dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
-                        for l in range(self.n_mg_levels)]        
+        self.Adiag = [ti.field(dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # A(i,j,k)(i,j,k)
+        self.Ax = [ti.Vector.field(dim, dtype=real, shape=[res[_] // 2**l for _ in range(dim)]) 
+                        for l in range(self.n_mg_levels)] # Ax=A(i,j,k)(i+1,j,k), Ay=A(i,j,k)(i,j+1,k), Az=A(i,j,k)(i,j,k+1)
+        
         
         self.x = ti.field(dtype=real, shape=res) # solution
         self.p = ti.field(dtype=real, shape=res) # conjugate gradient
@@ -79,39 +73,40 @@ class MGPCGPoissonSolver:
         for l in ti.static(range(self.n_mg_levels)):
             for I in ti.grouped(ti.ndrange(* [self.res[_] // (2**l) for _ in range(self.dim)])):
                 self.grid_type[l][I] = 0
-                self.L[l][I] = ti.zero(self.L[l][I])
+                self.Adiag[l][I] = 0
+                self.Ax[l][I] = ti.zero(self.Ax[l][I])
 
     def reinitialize(self, cell_type, strategy):
         self.initialize()
         self.grid_type[0].copy_from(cell_type)
         strategy.build_b(self)
-        strategy.build_L(self, 0)
+        strategy.build_A(self, 0)
 
         for l in range(1, self.n_mg_levels):
             self.init_gridtype(self.grid_type[l - 1], self.grid_type[l])
-            strategy.build_L(self, l)
+            strategy.build_A(self, l)
 
     @ti.func
     def neighbor_sum(self, Ax, x, I):
         ret = ti.cast(0.0, self.real)
         for i in ti.static(range(self.dim)):
             offset = ti.Vector.unit(self.dim, i)
-            ret += Ax[I][i * 2] * x[I - offset] + Ax[I][i * 2 + 1] * x[I + offset]
+            ret += Ax[I - offset][i] * x[I - offset] + Ax[I][i] * x[I + offset]
         return ret
 
     @ti.kernel
     def smooth(self, l: ti.template(), phase: ti.template()):
         # phase = red/black Gauss-Seidel phase
         for I in ti.grouped(self.r[l]):
-            if self.grid_type[l][I] == self.FLUID and (I.sum()) & 1 == phase:
-                self.z[l][I] = (self.r[l][I] - self.neighbor_sum(self.L[l], self.z[l], I)) * self.L[l][I][self.dim * 2 + 1]
+            if (I.sum()) & 1 == phase and self.grid_type[l][I] == self.FLUID:
+                self.z[l][I] = (self.r[l][I] - self.neighbor_sum(self.Ax[l], self.z[l], I)) / self.Adiag[l][I]
 
     @ti.kernel
     def restrict(self, l: ti.template()):
         for I in ti.grouped(self.r[l]):
             if self.grid_type[l][I] == self.FLUID:
-                Az = self.L[l][I][self.dim * 2] * self.z[l][I]
-                Az += self.neighbor_sum(self.L[l], self.z[l], I)
+                Az = self.Adiag[l][I] * self.z[l][I]
+                Az += self.neighbor_sum(self.Ax[l], self.z[l], I)
                 res = self.r[l][I] - Az
                 self.r[l + 1][I // 2] += res
 
@@ -154,9 +149,10 @@ class MGPCGPoissonSolver:
         self.r[0].copy_from(self.b)
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
-        
+
         if verbose:
-            print(f"init rtr = {initial_rTr}")
+             print(f"init rtr = {initial_rTr}")
+
         tol = initial_rTr * rel_tol
 
         # self.r = b - Ax = b    since self.x = 0
@@ -171,7 +167,7 @@ class MGPCGPoissonSolver:
         iter = 0
         while max_iters == -1 or iter < max_iters:
             # self.alpha = rTr / pTAp
-            self.apply_L()
+            self.compute_Ap()
             self.reduce(self.p, self.Ap)
             pAp = self.sum[None]
             self.alpha[None] = old_zTr / (pAp + eps)
@@ -212,11 +208,11 @@ class MGPCGPoissonSolver:
                 self.sum[None] += p[I] * q[I]
 
     @ti.kernel
-    def apply_L(self):
+    def compute_Ap(self):
         for I in ti.grouped(self.Ap):
             if self.grid_type[0][I] == self.FLUID:
-                r = self.L[0][I][self.dim * 2] * self.p[I]
-                r += self.neighbor_sum(self.L[0], self.p, I)
+                r = self.Adiag[0][I] * self.p[I]
+                r += self.neighbor_sum(self.Ax[0], self.p, I)
                 self.Ap[I] = r
 
     @ti.kernel
@@ -232,4 +228,3 @@ class MGPCGPoissonSolver:
         for I in ti.grouped(self.p):
             if self.grid_type[0][I] == self.FLUID:
                 self.p[I] = self.z[0][I] + self.beta[None] * self.p[I]
-

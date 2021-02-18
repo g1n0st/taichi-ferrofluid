@@ -9,7 +9,7 @@ from functools import reduce
 import time
 import numpy as np
 
-ti.init(arch=ti.cpu, kernel_profiler=True)
+ti.init(arch=ti.cuda, kernel_profiler=True)
 
 @ti.data_oriented
 class FluidSimulator:
@@ -58,7 +58,7 @@ class FluidSimulator:
         self.n_mg_levels = 4
         self.pre_and_post_smoothing = 2
         self.bottom_smoothing = 10
-        self.iterations = 50
+        self.iterations = 500
         self.verbose = True
         self.poisson_solver = MGPCGPoissonSolver(self.dim, 
                                                  self.res, 
@@ -67,7 +67,7 @@ class FluidSimulator:
                                                  self.bottom_smoothing,
                                                  self.real)
         
-        self.strategy = PressureProjectStrategy(self.velocity, self.real)
+        self.strategy = PressureProjectStrategy(self.velocity)
 
     @ti.func
     def is_valid(self, I):
@@ -150,7 +150,7 @@ class FluidSimulator:
                     self.velocity[k][I + ti.Vector.unit(self.dim, k)] = 0
 
     def solve_pressure(self, dt):
-        self.strategy.scale_L = dt / (self.rho * self.dx * self.dx)
+        self.strategy.scale_A = dt / (self.rho * self.dx * self.dx)
         self.strategy.scale_b = 1 / self.dx
 
         start1 = time.perf_counter()
