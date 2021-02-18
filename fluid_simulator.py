@@ -34,15 +34,15 @@ class FluidSimulator:
         self.substeps = substeps
 
         # cell_type
-        self.cell_type = ti.field(dtype=ti.i32)
+        self.cell_type = ti.field(dtype=ti.i8)
 
         self.velocity = [ti.field(dtype=real) for _ in range(self.dim)] # MAC grid
         self.velocity_backup = [ti.field(dtype=real) for _ in range(self.dim)]
         self.pressure = ti.field(dtype=real)
 
         # extrap utils
-        self.valid = ti.field(dtype=ti.i32)
-        self.valid_temp = ti.field(dtype=ti.i32)
+        self.valid = ti.field(dtype=ti.i8)
+        self.valid_temp = ti.field(dtype=ti.i8)
 
         # x/v for marker particles
         self.total_mk = ti.field(dtype=ti.i32, shape = ())
@@ -57,7 +57,7 @@ class FluidSimulator:
 
         self.n_mg_levels = 4
         self.pre_and_post_smoothing = 2
-        self.bottom_smoothing = 50
+        self.bottom_smoothing = 10
         self.iterations = 50
         self.verbose = True
         self.poisson_solver = MGPCGPoissonSolver(self.dim, 
