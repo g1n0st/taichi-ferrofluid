@@ -3,7 +3,7 @@ import taichi as ti
 import utils
 from utils import *
 from mgpcg import *
-from project import *
+from pressure_project import *
 
 from functools import reduce
 import time
@@ -32,17 +32,17 @@ class FluidSimulator:
         self.rho = rho
         self.gravity = gravity
         self.substeps = substeps
-
+ 
         # cell_type
-        self.cell_type = ti.field(dtype=ti.i8)
+        self.cell_type = ti.field(dtype=ti.i32)
 
         self.velocity = [ti.field(dtype=real) for _ in range(self.dim)] # MAC grid
         self.velocity_backup = [ti.field(dtype=real) for _ in range(self.dim)]
         self.pressure = ti.field(dtype=real)
 
         # extrap utils
-        self.valid = ti.field(dtype=ti.i8)
-        self.valid_temp = ti.field(dtype=ti.i8)
+        self.valid = ti.field(dtype=ti.i32)
+        self.valid_temp = ti.field(dtype=ti.i32)
 
         # x/v for marker particles
         self.total_mk = ti.field(dtype=ti.i32, shape = ())
@@ -67,14 +67,11 @@ class FluidSimulator:
                                                  self.bottom_smoothing,
                                                  self.real)
         
-        self.strategy = PressureProjectStrategy(0, 0, self.velocity)
+        self.strategy = PressureProjectStrategy(self.velocity, self.real)
 
     @ti.func
     def is_valid(self, I):
-        valid = True
-        for k in ti.static(range(self.dim)):
-            if I[k] < 0 or I[k] >= self.res[k]: valid = False
-        return valid
+        return all(I >= 0) and all(I < self.res)
 
     @ti.func
     def is_fluid(self, I):
@@ -82,7 +79,7 @@ class FluidSimulator:
 
     @ti.func
     def is_solid(self, I):
-        return self.is_valid(I) and self.cell_type[I] == utils.SOLID
+        return not self.is_valid(I) or self.cell_type[I] == utils.SOLID
 
     @ti.func
     def is_air(self, I):
@@ -153,7 +150,7 @@ class FluidSimulator:
                     self.velocity[k][I + ti.Vector.unit(self.dim, k)] = 0
 
     def solve_pressure(self, dt):
-        self.strategy.scale_A = dt / (self.rho * self.dx * self.dx)
+        self.strategy.scale_L = dt / (self.rho * self.dx * self.dx)
         self.strategy.scale_b = 1 / self.dx
 
         start1 = time.perf_counter()
@@ -235,8 +232,9 @@ class FluidSimulator:
         self.update_velocity()
         self.enforce_boundary()
 
-        mks = max(np.max(self.velocity[0].to_numpy()), np.max(self.velocity[1].to_numpy()))
-        print(f'\033[36mMax advect velocity: {mks}\033[0m')
+        if self.verbose:
+            mks = max(np.max(self.velocity[0].to_numpy()), np.max(self.velocity[1].to_numpy()))
+            print(f'\033[36mMax advect velocity: {mks}\033[0m')
 
         self.add_gravity(dt)
         self.enforce_boundary()
@@ -246,18 +244,21 @@ class FluidSimulator:
 
         self.solve_pressure(dt)
         
-        prs = np.max(self.pressure.to_numpy())
-        print(f'\033[36mMax pressure: {prs}\033[0m')
+        if self.verbose:
+            prs = np.max(self.pressure.to_numpy())
+            print(f'\033[36mMax pressure: {prs}\033[0m')
 
         self.apply_pressure(dt)
 
         self.extrap_velocity()
         self.enforce_boundary()
     
-    def run(self, max_steps, visualizer):
+    def run(self, max_steps, visualizer, verbose = True):
+        self.verbose = verbose
         step = 0
+        
         while step < max_steps or max_steps == -1:
-            print(step)
+            print(f'Current progress: ({step} / {max_steps})')
             for substep in range(self.substeps):
                 self.substep(self.dt)
             visualizer.visualize(self)
@@ -298,79 +299,3 @@ class FluidSimulator:
         
         self.init_boundary()
         self.init_markers()
-
-@ti.data_oriented
-class Initializer: # tmp initializer
-    def __init__(self, x, y, x1, x2, y1, y2):
-        self.x = x
-        self.y = y
-        self.x1 = x1
-        self.x2 = x2
-        self.y1 = y1
-        self.y2 = y2
-
-    @ti.kernel
-    def init_kernel(self, cell_type : ti.template(), dx : ti.template()):
-        xn = int(self.x)
-        yn = int(self.y)
-        x1_ = int(self.x1)
-        x2_ = int(self.x2)
-        y1_ = int(self.y1)
-        y2_ = int(self.y2)
-
-        for i, j in cell_type:
-            if i <= xn and j <= yn:
-                cell_type[i, j] = utils.FLUID
-            elif i >= x1_ and i <= x2_ and j >= y1_ and j <= y2_:
-                cell_type[i, j] = utils.SOLID
-
-    def init_scene(self, simulator):
-        self.init_kernel(simulator.cell_type, simulator.dx)
-
-@ti.data_oriented
-class Visualizer: # tmp visualizer
-    def __init__(self, res, switch = 1):
-        self.grid_res = res
-        self.res = 512
-        self.switch = switch
-        self.gui = ti.GUI("demo", (self.res, self.res))
-        self.color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(self.res, self.res))
-    
-    @ti.kernel
-    def fill_marker(self, dx : ti.template(), p : ti.template()):
-        for i, j in self.color_buffer:
-            x = int((i + 0.5) / self.res * dx)
-            y = int((j + 0.5) / self.res * dx)
-
-            m = (ti.log(min(p[x, y], 100) + 1) / ti.log(10)) / 2.001
-            self.color_buffer[i, j] = ti.Vector([m, m, m])
-
-    def visualize_1(self, simulator):
-        self.fill_marker(simulator.dx * 128, simulator.pressure)
-        img = self.color_buffer.to_numpy()
-        self.gui.set_image(img)
-        self.gui.show()
-    
-    def visualize_2(self, simulator):
-        bg_color = 0x000000
-        particle_color = 0x0FFFFF
-        particle_radius = 1.0
-        pos = simulator.markers.to_numpy()
-        
-        self.gui.clear(bg_color)
-        self.gui.circles(pos / (self.grid_res * simulator.dx), radius=particle_radius, color=particle_color)
-        self.gui.show()
-
-    def visualize(self, simulator):
-        if self.switch == 1:
-            self.visualize_1(simulator)
-        else:
-            self.visualize_2(simulator)
-
-if __name__ == '__main__':
-    res = 256
-    solver = FluidSimulator(2, (res, res), 0.01, 1, 10 / res)
-    initializer = Initializer(0.4 * res, 0.4 * res, 0.44 * res, 0.6 * res, 0.1 * res, 0.5 * res)
-    visualizer = Visualizer(res, 2)
-    solver.initialize(initializer)
-    solver.run(-1, visualizer)

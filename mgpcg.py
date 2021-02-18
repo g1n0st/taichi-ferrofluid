@@ -154,8 +154,9 @@ class MGPCGPoissonSolver:
         self.r[0].copy_from(self.b)
         self.reduce(self.r[0], self.r[0])
         initial_rTr = self.sum[None]
-
-        print(f"init rtr = {initial_rTr}")
+        
+        if verbose:
+            print(f"init rtr = {initial_rTr}")
         tol = initial_rTr * rel_tol
 
         # self.r = b - Ax = b    since self.x = 0
