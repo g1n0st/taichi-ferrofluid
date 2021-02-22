@@ -2,20 +2,18 @@ import taichi as ti
 
 import utils
 from utils import *
-
 from functools import reduce
-import time
 
 @ti.data_oriented
 class PriorityQueue:
     def __init__(self, dim, res, real):
         self.dim = dim
         self.res = res
-        self.max_length = reduce(lambda x, y : x * y, res)
+        self.max_length = reduce(lambda x, y : x * y, res)        
         self.real = real
 
         self.dist = ti.field(dtype=real, shape=self.max_length)
-        self.node = ti.Vector.field(dim, dtype=real, shape=self.max_length)
+        self.node = ti.Vector.field(dim, dtype=ti.i32, shape=self.max_length)
         
         self.total = ti.field(dtype=ti.i32, shape=())
     
@@ -36,7 +34,7 @@ class PriorityQueue:
     @ti.func
     def top(self):
         assert(self.total[None] > 0)
-        return self.node[1], self.dist[1]
+        return self.node[1]
 
     @ti.func
     def pop(self):

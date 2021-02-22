@@ -2,8 +2,9 @@ import taichi as ti
 
 import utils
 from utils import *
-from mgpcg import *
-from pressure_project import *
+from mgpcg import MGPCGPoissonSolver
+from pressure_project import PressureProjectStrategy
+from level_set import LevelSet
 
 from functools import reduce
 import time
@@ -68,6 +69,9 @@ class FluidSimulator:
                                                  self.real)
         
         self.strategy = PressureProjectStrategy(self.velocity)
+        
+        # Level-Set
+        self.level_set = LevelSet(self.dim, self.res, self.dx, self.real)
 
     @ti.func
     def is_valid(self, I):
@@ -182,13 +186,17 @@ class FluidSimulator:
         dst[I] = self.sample(src, p0 / self.dx, offset, src.shape)
 
     @ti.kernel
-    def advect_velocity(self, dt : ti.f32):
+    def advect_quantity(self, dt : ti.f32):
+        for I in ti.grouped(self.level_set.phi):
+            self.advect(I, self.level_set.phi_temp, self.level_set.phi, 0.5, dt)
+
         for k in ti.static(range(self.dim)):
             offset = 0.5 * (1 - ti.Vector.unit(self.dim, k))
             for I in ti.grouped(self.velocity_backup[k]):
                 self.advect(I, self.velocity_backup[k], self.velocity[k], offset, dt)
 
-    def update_velocity(self):
+    def update_quantity(self):
+        self.level_set.phi.copy_from(self.level_set.phi_temp)
         for k in range(self.dim):
             self.velocity[k].copy_from(self.velocity_backup[k]) 
 
@@ -228,8 +236,9 @@ class FluidSimulator:
         self.advect_markers(dt)
         self.apply_markers()
 
-        self.advect_velocity(dt)
-        self.update_velocity()
+        self.advect_quantity(dt)
+        self.update_quantity()
+        self.level_set.redistance()
         self.enforce_boundary()
 
         if self.verbose:
