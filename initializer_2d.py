@@ -22,5 +22,6 @@ class Initializer2D:
                 cell_type[i, j] = utils.SOLID
 
     def init_scene(self, simulator):
+        simulator.level_set.initialize_with_aabb((0, self.yn * simulator.dx), (self.xn * simulator.dx, self.res * simulator.dx))
         self.init_kernel(simulator.cell_type)
 
