@@ -50,7 +50,7 @@ class LevelSet:
         
         for I in ti.grouped(self.phi):
             sign_change = False
-            est = ti.cast(0, self.real)
+            est = ti.cast(1e20, self.real)
             for k in ti.static(range(self.dim)):
                 for s in ti.static((-1, 1)):
                     offset = ti.Vector.unit(self.dim, k) * s
@@ -59,24 +59,25 @@ class LevelSet:
                     ts.sign(self.phi[I]) != ts.sign(self.phi[I1]):
                         theta = self.phi[I] / (self.phi[I] - self.phi[I1])
                         est0 = ts.sign(self.phi[I]) * theta * self.dx
-                        est = est0 if not sign_change or ti.abs(est0) < ti.abs(est) else est
+                        est = est0 if ti.abs(est0) < ti.abs(est) else est
                         sign_change = True
 
             if sign_change:
-                self.phi[I] = est
+                self.phi_temp[I] = est
                 self.valid[I] = 1
                 offset = self.total_sg[None].atomic_add(1)
                 self.surface_grid[offset] = I
             else:
-                self.phi[I] = ti.cast(1e20, self.real) # an upper bound for all possible distances
+                self.phi_temp[I] = ti.cast(1e20, self.real) # an upper bound for all possible distances
 
         self.priority_queue.clear()
         cnt = 0
         while cnt < self.total_sg[None]:
             I = self.surface_grid[cnt]
-            self.priority_queue.push(ti.abs(self.phi[I]), I)
+            self.priority_queue.push(ti.abs(self.phi_temp[I]), I)
             cnt += 1
 
+    # Fast Marching Method
     @ti.kernel
     def propagate(self):
         while not self.priority_queue.empty():
@@ -89,19 +90,18 @@ class LevelSet:
                     I = I0 + offset
                     if I[k] >= 0 and I[k] < self.res[k] and \
                     self.valid[I] == 0:
-                        
                         # solve the Eikonal equation
                         nb = ti.Vector.zero(self.real, self.dim)
                         for k1 in ti.static(range(self.dim)):
                             o = ti.Vector.unit(self.dim, k1)
-                            if I[k1] == 0 or ti.abs(self.phi[I + o]) < ti.abs(self.phi[I - o]): nb[k1] = ti.abs(self.phi[I + o])
-                            else: nb[k1] = ti.abs(self.phi[I - o])
-                    
+                            if I[k1] == 0 or ti.abs(self.phi_temp[I + o]) < ti.abs(self.phi_temp[I - o]): nb[k1] = ti.abs(self.phi_temp[I + o])
+                            else: nb[k1] = ti.abs(self.phi_temp[I - o])
+                   
                         # sort
                         for i in ti.static(range(self.dim-1)):
                             for j in ti.static(range(self.dim-1-i)):
                                 if nb[j] > nb[j + 1]: nb[j], nb[j + 1] = nb[j + 1], nb[j]
-
+                        
                         # (Try just the closest neighbor)
                         d = nb[0] + self.dx
                         if d > nb[1]:
@@ -111,12 +111,14 @@ class LevelSet:
                                 if d > nb[2]:
                                     # (Use all three neighbors)
                                     d = (1/3) * (nb[0] + nb[1] + nb[2] + ti.sqrt(ti.max(0, (nb[0] + nb[1] + nb[2]) ** 2 - 3 * (nb[0] ** 2 + nb[1] ** 2 + nb[2] ** 2 - self.dx ** 2))))
-
-                        if d < ti.abs(self.phi[I]): self.phi[I] = d * ts.sign(self.phi_temp[I0])
+    
+                        if d < ti.abs(self.phi_temp[I]): 
+                            self.phi_temp[I] = d * ts.sign(self.phi[I0])
                         self.valid[I] = 1
-                        self.priority_queue.push(ti.abs(self.phi[I]), I)
+                        self.priority_queue.push(ti.abs(self.phi_temp[I]), I)
 
     def redistance(self):
         self.valid.fill(0)
         self.target_surface()
         self.propagate()
+        self.phi.copy_from(self.phi_temp)

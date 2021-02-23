@@ -144,6 +144,7 @@ class MGPCGPoissonSolver:
               max_iters=-1,
               verbose=False,
               rel_tol=1e-12,
+              abs_tol=1e-14,
               eps=1e-12):
 
         self.r[0].copy_from(self.b)
@@ -153,7 +154,7 @@ class MGPCGPoissonSolver:
         if verbose:
              print(f"init rtr = {initial_rTr}")
 
-        tol = initial_rTr * rel_tol
+        tol = max(abs_tol, initial_rTr * rel_tol)
 
         # self.r = b - Ax = b    since self.x = 0
         # self.p = self.r = self.r + 0 self.p

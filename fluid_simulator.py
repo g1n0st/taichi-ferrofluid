@@ -130,12 +130,10 @@ class FluidSimulator:
             if self.cell_type[I] != utils.SOLID:
                 self.cell_type[I] = utils.AIR
 
-        for p in range(self.total_mk[None]):
-            I = ti.Vector.zero(ti.i32, self.dim)
-            for k in ti.static(range(self.dim)):
-                I[k] = clamp(int(self.markers[p][k] / self.dx), 0, self.res[k] - 1)
-            if self.cell_type[I] != utils.SOLID:
+        for I in ti.grouped(self.cell_type):
+            if self.level_set.phi[I] <= 0:
                 self.cell_type[I] = utils.FLUID
+
 
     @ti.kernel
     def add_gravity(self, dt : ti.f32):
@@ -234,11 +232,10 @@ class FluidSimulator:
 
     def substep(self, dt):
         self.advect_markers(dt)
-        self.apply_markers()
-
         self.advect_quantity(dt)
         self.update_quantity()
         self.level_set.redistance()
+        self.apply_markers()
         self.enforce_boundary()
 
         if self.verbose:
@@ -265,7 +262,7 @@ class FluidSimulator:
     def run(self, max_steps, visualizer, verbose = True):
         self.verbose = verbose
         step = 0
-        
+
         while step < max_steps or max_steps == -1:
             print(f'Current progress: ({step} / {max_steps})')
             for substep in range(self.substeps):
