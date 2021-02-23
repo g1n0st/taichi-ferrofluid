@@ -22,13 +22,14 @@ class Visualizer2D:
             self.color_buffer[i, j] = ti.Vector([m, m, m])
 
     @ti.kernel
-    def fill_levelset(self, grid_res : ti.template(), phi : ti.template(), dx : ti.template()):
+    def fill_levelset(self, grid_res : ti.template(), phi : ti.template(), dx : ti.template(), valid : ti.template()):
         for i, j in self.color_buffer:
             x = int((i + 0.5) / self.res * grid_res[0])
             y = int((j + 0.5) / self.res * grid_res[1])
 
-            p = phi[x, y] / (dx * grid_res[0]) * 2
+            p = min(phi[x, y] / (dx * grid_res[0]) * 10, 1)
 
+            # if valid[x, y] == 1: self.color_buffer[i, j] = ti.Vector([1, 1, 1])
             if p > 0: self.color_buffer[i, j] = ti.Vector([p, 0, 0])
             else: self.color_buffer[i, j] = ti.Vector([0, 0, -p])
 
@@ -39,7 +40,7 @@ class Visualizer2D:
         self.gui.show()
 
     def visualize_levelset(self, simulator):
-        self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx)
+        self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx, simulator.level_set.valid)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
         self.gui.show()
