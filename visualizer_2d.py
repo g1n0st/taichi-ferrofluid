@@ -27,7 +27,7 @@ class Visualizer2D:
             x = int((i + 0.5) / self.res * grid_res[0])
             y = int((j + 0.5) / self.res * grid_res[1])
 
-            p = min(phi[x, y] / (dx * grid_res[0]) * 10, 1)
+            p = min(phi[x, y] / (dx * grid_res[0]) * 100, 1)
 
             # if valid[x, y] == 1: self.color_buffer[i, j] = ti.Vector([1, 1, 1])
             if p > 0: self.color_buffer[i, j] = ti.Vector([p, 0, 0])
