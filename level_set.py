@@ -94,7 +94,7 @@ class LevelSet:
                         nb = ti.Vector.zero(self.real, self.dim)
                         for k1 in ti.static(range(self.dim)):
                             o = ti.Vector.unit(self.dim, k1)
-                            if I[k1] == 0 or ti.abs(self.phi_temp[I + o]) < ti.abs(self.phi_temp[I - o]): nb[k1] = ti.abs(self.phi_temp[I + o])
+                            if I[k1] == 0 or (I[k1] < self.res[k1] - 1 and ti.abs(self.phi_temp[I + o]) < ti.abs(self.phi_temp[I - o])): nb[k1] = ti.abs(self.phi_temp[I + o])
                             else: nb[k1] = ti.abs(self.phi_temp[I - o])
                    
                         # sort
