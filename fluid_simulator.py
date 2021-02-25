@@ -56,6 +56,10 @@ class FluidSimulator:
         for d in range(self.dim):
             ti.root.dense(indices, [res[_] + (d == _) for _ in range(self.dim)]).place(self.velocity[d], self.velocity_backup[d])
 
+        # Level-Set
+        self.level_set = LevelSet(self.dim, self.res, self.dx, self.real)
+
+        # MGPCG
         self.n_mg_levels = 4
         self.pre_and_post_smoothing = 2
         self.bottom_smoothing = 10
@@ -67,12 +71,11 @@ class FluidSimulator:
                                                  self.pre_and_post_smoothing,
                                                  self.bottom_smoothing,
                                                  self.real)
-        
-        self.strategy = PressureProjectStrategy(self.velocity)
-        
-        # Level-Set
-        self.level_set = LevelSet(self.dim, self.res, self.dx, self.real)
 
+        # Pressure Solve
+        self.ghost_fluid_method = True # Gibou et al. [GFCK02]
+        self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi)
+        
     @ti.func
     def is_valid(self, I):
         return all(I >= 0) and all(I < self.res)
@@ -175,7 +178,23 @@ class FluidSimulator:
                 I_1 = I - ti.Vector.unit(self.dim, k)
                 if self.is_fluid(I_1) or self.is_fluid(I):
                     if self.is_solid(I_1) or self.is_solid(I): self.velocity[k][I] = 0
-                    else: self.velocity[k][I] += scale * (self.pressure[I_1] - self.pressure[I])
+                    # FLuid-Air
+                    elif self.is_air(I): 
+                        if ti.static(self.ghost_fluid_method):
+                            c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I_1]
+                            c = utils.clamp(c, -1e3, 1e3) # limit the coefficient
+                            self.velocity[k][I] -= scale * self.pressure[I_1] * c
+                        else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
+                    # Air-Fluid
+                    elif self.is_air(I_1):
+                        if ti.static(self.ghost_fluid_method):
+                            c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I]
+                            c = utils.clamp(c, -1e3, 1e3)
+                            self.velocity[k][I] -= scale * self.pressure[I] * c
+                        else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
+                    # Fluid-Fluid
+                    else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
+
     @ti.func
     def advect(self, I, dst, src, offset, dt):
         pos = (I + offset) * self.dx
