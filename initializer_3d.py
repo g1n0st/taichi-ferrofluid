@@ -24,4 +24,6 @@ class Initializer3D: # tmp initializer
 
     def init_scene(self, simulator):
         self.init_kernel(simulator.cell_type)
+        dx = simulator.dx
+        simulator.level_set.initialize_with_aabb((self.x0 * dx, self.y0 * dx, self.z0 * dx), (self.x1 * dx, self.y1 * dx, self.z1 * dx))
 

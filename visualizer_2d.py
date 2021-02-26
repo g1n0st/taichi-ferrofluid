@@ -49,7 +49,7 @@ class Visualizer2D:
         bg_color = 0x000000
         particle_color = 0x0FFFFF
         particle_radius = 1.0
-        pos = simulator.markers.to_numpy()
+        pos = simulator.p_x.to_numpy()
         
         self.gui.clear(bg_color)
         self.gui.circles(pos / (self.grid_res * simulator.dx), radius=particle_radius, color=particle_color)

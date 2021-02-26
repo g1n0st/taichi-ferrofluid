@@ -12,6 +12,10 @@ import numpy as np
 
 ti.init(arch=ti.cuda, kernel_profiler=True)
 
+ADVECT_REDISTANCE = 0
+MARKERS = 1
+APIC = 2
+
 @ti.data_oriented
 class FluidSimulator:
     def __init__(self,
@@ -23,44 +27,55 @@ class FluidSimulator:
         rho = 1000.0,
         gravity = [0, -9.8],
         real = float):
-        
+
+        # ADVECT_REDISTANCE: advect the level-set with Semi-Lagrangian, then redistance it (Standard)
+        # MARKERS: advect markers with Semi-Lagrangian, then build the level-set from markers
+        # APIC: use apic [Jiang et al. 2015] to advect grids, advect markers with Semi-Lagrangian, then build the level-set from markers
+        self.solver_type = ADVECT_REDISTANCE
+
         self.dim = dim
         self.real = real
         self.res = res
         self.dx = dx
         self.dt = dt
-        
+
         self.rho = rho
         self.gravity = gravity
         self.substeps = substeps
- 
+
         # cell_type
         self.cell_type = ti.field(dtype=ti.i32)
 
         self.velocity = [ti.field(dtype=real) for _ in range(self.dim)] # MAC grid
-        self.velocity_backup = [ti.field(dtype=real) for _ in range(self.dim)]
+        self.velocity_backup = [ti.field(dtype=real) for _ in range(self.dim)] # backup / use as weight in apic update
         self.pressure = ti.field(dtype=real)
 
         # extrap utils
         self.valid = ti.field(dtype=ti.i32)
         self.valid_temp = ti.field(dtype=ti.i32)
 
-        # x/v for marker particles
-        self.total_mk = ti.field(dtype=ti.i32, shape = ())
-        self.markers = ti.Vector.field(dim, dtype=real)
-        
+        # marker/apic particles
+        self.total_mk = ti.field(dtype=ti.i32, shape = ()) # total number of particles/markers
+        self.p_x = ti.Vector.field(dim, dtype=real) # positions
+        self.p_v = ti.Vector.field(dim, dtype=real) # velocities
+        self.p_cp = [ti.Vector.field(dim, dtype=real) for _ in range(self.dim)] # affine-velocities
+
         indices = ti.ijk if self.dim == 3 else ti.ij
-        ti.root.dense(ti.i, reduce(lambda x, y : x * y, res) * (2 ** dim)).place(self.markers)
+        max_particles = reduce(lambda x, y : x * y, res) * (2 ** dim)
+        ti.root.dense(ti.i, max_particles).place(self.p_x, self.p_v)
+        for d in range(self.dim):
+            ti.root.dense(ti.i, max_particles).place(self.p_cp[d])
+
         ti.root.dense(indices, res).place(self.cell_type, self.pressure)
         ti.root.dense(indices, [res[_] + 1 for _ in range(self.dim)]).place(self.valid, self.valid_temp)
         for d in range(self.dim):
             ti.root.dense(indices, [res[_] + (d == _) for _ in range(self.dim)]).place(self.velocity[d], self.velocity_backup[d])
-
+        
         # Level-Set
         self.level_set = LevelSet(self.dim, 
                                   self.res, 
                                   self.dx, 
-                                  self.markers,
+                                  self.p_x,
                                   self.total_mk,
                                   self.real)
 
@@ -80,7 +95,7 @@ class FluidSimulator:
         # Pressure Solve
         self.ghost_fluid_method = True # Gibou et al. [GFCK02]
         self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi)
-        
+
     @ti.func
     def is_valid(self, I):
         return all(I >= 0) and all(I < self.res)
@@ -98,54 +113,23 @@ class FluidSimulator:
         return self.is_valid(I) and self.cell_type[I] == utils.AIR
 
     @ti.func
-    def sample(self, data, pos, offset, tot):
-        pos = pos - offset
-        # static unfold for efficiency
-        if ti.static(self.dim == 2):
-            i, j = clamp(int(pos[0]), 0, tot[0] - 1), clamp(int(pos[1]), 0, tot[1] - 1)
-            ip, jp = clamp(i + 1, 0, tot[0] - 1), clamp(j + 1, 0, tot[1] - 1)
-            s, t = clamp(pos[0] - i, 0.0, 1.0), clamp(pos[1] - j, 0.0, 1.0)
-            return \
-                (data[i, j] * (1 - s) + data[ip, j] * s) * (1 - t) + \
-                (data[i, jp] * (1 - s) + data[ip, jp] * s) * t
-
-        else:
-            i, j, k = clamp(int(pos[0]), 0, tot[0] - 1), clamp(int(pos[1]), 0, tot[1] - 1), clamp(int(pos[2]), 0, tot[2] - 1)
-            ip, jp, kp = clamp(i + 1, 0, tot[0] - 1), clamp(j + 1, 0, tot[1] - 1), clamp(k + 1, 0, tot[2] - 1)
-            s, t, u = clamp(pos[0] - i, 0.0, 1.0), clamp(pos[1] - j, 0.0, 1.0), clamp(pos[2] - k, 0.0, 1.0)
-            return \
-                ((data[i, j, k] * (1 - s) + data[ip, j, k] * s) * (1 - t) + \
-                (data[i, jp, k] * (1 - s) + data[ip, jp, k] * s) * t) * (1 - u) + \
-                ((data[i, j, kp] * (1 - s) + data[ip, j, kp] * s) * (1 - t) + \
-                (data[i, jp, kp] * (1 - s) + data[ip, jp, kp] * s) * t) * u
-
-    @ti.func
     def vel_interp(self, pos):
         v = ti.Vector.zero(self.real, self.dim)
         for k in ti.static(range(self.dim)):
-            v[k] = self.sample(self.velocity[k], pos / self.dx, 0.5 * (1 - ti.Vector.unit(self.dim, k)), self.velocity[k].shape)
+            v[k] = utils.sample(self.velocity[k], pos / self.dx - 0.5 * (1 - ti.Vector.unit(self.dim, k)))
         return v
 
     @ti.kernel
     def advect_markers(self, dt : ti.f32):
         for p in range(self.total_mk[None]):
-            midpos = self.markers[p] + self.vel_interp(self.markers[p]) * (0.5 * dt)
-            self.markers[p] += self.vel_interp(midpos) * dt
+            midpos = self.p_x[p] + self.vel_interp(self.p_x[p]) * (0.5 * dt)
+            self.p_x[p] += self.vel_interp(midpos) * dt
 
     @ti.kernel
     def apply_markers(self):
         for I in ti.grouped(self.cell_type):
             if self.cell_type[I] != utils.SOLID:
                 self.cell_type[I] = utils.AIR
-
-        '''
-        for p in range(self.total_mk[None]):
-            I = ti.Vector.zero(ti.i32, self.dim)
-            for k in ti.static(range(self.dim)):
-                I[k] = clamp(int(self.markers[p][k] / self.dx), 0, self.res[k] - 1)
-            if self.cell_type[I] != utils.SOLID:
-                self.cell_type[I] = utils.FLUID
-        '''
 
         for I in ti.grouped(self.cell_type):
             if self.cell_type[I] != utils.SOLID and self.level_set.phi[I] <= 0:
@@ -158,7 +142,7 @@ class FluidSimulator:
                 g = self.gravity[k]
                 for I in ti.grouped(self.velocity[k]):
                     self.velocity[k][I] += g * dt
-    
+
     @ti.kernel
     def enforce_boundary(self):
         for I in ti.grouped(self.cell_type):
@@ -213,16 +197,22 @@ class FluidSimulator:
         pos = (I + offset) * self.dx
         midpos = pos - self.vel_interp(pos) * (0.5 * dt)
         p0 = pos - self.vel_interp(midpos) * dt
-        dst[I] = self.sample(src, p0 / self.dx, offset, src.shape)
+        dst[I] = utils.sample(src, p0 / self.dx - offset)
 
     @ti.kernel
     def advect_quantity(self, dt : ti.f32):
+        if ti.static(self.solver_type == ADVECT_REDISTANCE):
+            for I in ti.grouped(self.level_set.phi):
+                self.advect(I, self.level_set.phi_temp, self.level_set.phi, 0.5, dt)
+
         for k in ti.static(range(self.dim)):
             offset = 0.5 * (1 - ti.Vector.unit(self.dim, k))
             for I in ti.grouped(self.velocity_backup[k]):
                 self.advect(I, self.velocity_backup[k], self.velocity[k], offset, dt)
 
     def update_quantity(self):
+        if ti.static(self.solver_type == ADVECT_REDISTANCE):
+            self.level_set.phi.copy_from(self.level_set.phi_temp)
         for k in range(self.dim):
             self.velocity[k].copy_from(self.velocity_backup[k]) 
 
@@ -258,11 +248,47 @@ class FluidSimulator:
                 self.valid_temp.copy_from(self.valid)
                 self.diffuse_quantity(self.velocity[k], self.velocity_backup[k], self.valid, self.valid_temp)
 
+    @ti.func
+    def apic_c(self, stagger, xp, grid_v):
+        base = (xp / self.dx - stagger).cast(int)
+        new_c = ti.Vector.zero(self.real, self.dim)
+
+        for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2), ) * self.dim))):
+            dpos = xp / self.dx - (base + offset + stagger)
+            weight = ti.cast(1.0, self.real)
+            for k in ti.static(range(self.dim)): weight *= (1.0 - ti.abs(dpos[k]))
+            new_c += 4 * weight * dpos * grid_v[base + offset]
+
+        return new_c
+
+    @ti.kernel
+    def update_from_grid(self):
+        for p in range(self.total_mk[None]):
+            self.p_v[p] = self.vel_interp(self.p_x[p])
+            for k in ti.static(range(self.dim)):
+                self.p_cp[k][p] = self.apic_c(0.5 * (1 - ti.Vector.unit(self.dim, k)), self.p_x[p], self.velocity[k])
+
+    @ti.kernel
+    def transfer_to_grid(self):
+        for p in range(self.total_mk[None]):
+            for k in ti.static(range(self.dim)):
+                utils.splat(self.velocity[k], self.velocity_backup[k], self.p_v[p][k], self.p_x[p] / self.dx - 0.5 * (1 - ti.Vector.unit(self.dim, k)), self.p_cp[k][p])
+
+        for k in ti.static(range(self.dim)):
+            for I in ti.grouped(self.velocity_backup[k]):
+                if self.velocity_backup[k][I] > 0:
+                    self.velocity[k][I] /= self.velocity_backup[k][I]
+
     def substep(self, dt):
         self.advect_markers(dt)
         self.advect_quantity(dt)
         self.update_quantity()
-        self.level_set.build_from_markers()
+
+        if self.solver_type == MARKERS:
+            self.level_set.build_from_markers()
+        else:
+            self.level_set.redistance()
+
         self.apply_markers()
         self.enforce_boundary()
 
@@ -277,7 +303,7 @@ class FluidSimulator:
         self.enforce_boundary()
 
         self.solve_pressure(dt)
-        
+
         if self.verbose:
             prs = np.max(self.pressure.to_numpy())
             print(f'\033[36mMax pressure: {prs}\033[0m')
@@ -286,7 +312,31 @@ class FluidSimulator:
 
         self.extrap_velocity()
         self.enforce_boundary()
-    
+
+    def apic_substep(self, dt):
+        self.level_set.build_from_markers()
+        self.apply_markers()
+
+        for k in range(self.dim):
+            self.velocity[k].fill(0)
+            self.velocity_backup[k].fill(0)
+        self.transfer_to_grid()
+        self.extrap_velocity()
+        self.enforce_boundary()
+
+        self.add_gravity(dt)
+        self.enforce_boundary()
+
+        self.solve_pressure(dt)
+
+        if self.verbose:
+            prs = np.max(self.pressure.to_numpy())
+            print(f'\033[36mMax pressure: {prs}\033[0m')
+
+        self.apply_pressure(dt)
+        self.update_from_grid()
+        self.advect_markers(dt)
+
     def run(self, max_steps, visualizer, verbose = True):
         self.verbose = verbose
         step = 0
@@ -294,7 +344,8 @@ class FluidSimulator:
         while step < max_steps or max_steps == -1:
             print(f'Current progress: ({step} / {max_steps})')
             for substep in range(self.substeps):
-                self.substep(self.dt)
+                if self.solver_type == APIC: self.apic_substep(self.dt)
+                else: self.substep(self.dt)
             visualizer.visualize(self)
             step += 1
 
@@ -311,7 +362,10 @@ class FluidSimulator:
             if self.cell_type[I] == utils.FLUID:
                 for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2), ) * self.dim))):
                     num = ti.atomic_add(self.total_mk[None], 1)
-                    self.markers[num] = (I + (offset + [ti.random() for _ in ti.static(range(self.dim))]) / 2) * self.dx
+                    self.p_x[num] = (I + (offset + [ti.random() for _ in ti.static(range(self.dim))]) / 2) * self.dx
+                    self.p_v[num] = ti.zero(self.p_v[num])
+                    for k in ti.static(range(self.dim)):
+                        self.p_cp[k][num] = ti.zero(self.p_cp[k][num])
 
     @ti.kernel
     def reinitialize(self):
@@ -330,6 +384,6 @@ class FluidSimulator:
 
         self.cell_type.fill(utils.AIR)
         initializer.init_scene(self) 
-        
+
         self.init_boundary()
         self.init_markers()
