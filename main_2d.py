@@ -1,5 +1,6 @@
 import taichi as ti
 from fluid_simulator import *
+from apic_extension import *
 from initializer_2d import *
 from visualizer_2d import *
 

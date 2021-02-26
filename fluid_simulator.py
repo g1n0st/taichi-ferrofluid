@@ -14,7 +14,6 @@ ti.init(arch=ti.cuda, kernel_profiler=True)
 
 ADVECT_REDISTANCE = 0
 MARKERS = 1
-APIC = 2
 
 @ti.data_oriented
 class FluidSimulator:
@@ -30,7 +29,6 @@ class FluidSimulator:
 
         # ADVECT_REDISTANCE: advect the level-set with Semi-Lagrangian, then redistance it (Standard)
         # MARKERS: advect markers with Semi-Lagrangian, then build the level-set from markers
-        # APIC: use apic [Jiang et al. 2015] to advect grids, advect markers with Semi-Lagrangian, then build the level-set from markers
         self.solver_type = ADVECT_REDISTANCE
 
         self.dim = dim
@@ -57,14 +55,10 @@ class FluidSimulator:
         # marker/apic particles
         self.total_mk = ti.field(dtype=ti.i32, shape = ()) # total number of particles/markers
         self.p_x = ti.Vector.field(dim, dtype=real) # positions
-        self.p_v = ti.Vector.field(dim, dtype=real) # velocities
-        self.p_cp = [ti.Vector.field(dim, dtype=real) for _ in range(self.dim)] # affine-velocities
-
+        
         indices = ti.ijk if self.dim == 3 else ti.ij
         max_particles = reduce(lambda x, y : x * y, res) * (2 ** dim)
-        ti.root.dense(ti.i, max_particles).place(self.p_x, self.p_v)
-        for d in range(self.dim):
-            ti.root.dense(ti.i, max_particles).place(self.p_cp[d])
+        ti.root.dense(ti.i, max_particles).place(self.p_x)
 
         ti.root.dense(indices, res).place(self.cell_type, self.pressure)
         ti.root.dense(indices, [res[_] + 1 for _ in range(self.dim)]).place(self.valid, self.valid_temp)
@@ -248,37 +242,6 @@ class FluidSimulator:
                 self.valid_temp.copy_from(self.valid)
                 self.diffuse_quantity(self.velocity[k], self.velocity_backup[k], self.valid, self.valid_temp)
 
-    @ti.func
-    def apic_c(self, stagger, xp, grid_v):
-        base = (xp / self.dx - stagger).cast(int)
-        new_c = ti.Vector.zero(self.real, self.dim)
-
-        for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2), ) * self.dim))):
-            dpos = xp / self.dx - (base + offset + stagger)
-            weight = ti.cast(1.0, self.real)
-            for k in ti.static(range(self.dim)): weight *= (1.0 - ti.abs(dpos[k]))
-            new_c += 4 * weight * dpos * grid_v[base + offset]
-
-        return new_c
-
-    @ti.kernel
-    def update_from_grid(self):
-        for p in range(self.total_mk[None]):
-            self.p_v[p] = self.vel_interp(self.p_x[p])
-            for k in ti.static(range(self.dim)):
-                self.p_cp[k][p] = self.apic_c(0.5 * (1 - ti.Vector.unit(self.dim, k)), self.p_x[p], self.velocity[k])
-
-    @ti.kernel
-    def transfer_to_grid(self):
-        for p in range(self.total_mk[None]):
-            for k in ti.static(range(self.dim)):
-                utils.splat(self.velocity[k], self.velocity_backup[k], self.p_v[p][k], self.p_x[p] / self.dx - 0.5 * (1 - ti.Vector.unit(self.dim, k)), self.p_cp[k][p])
-
-        for k in ti.static(range(self.dim)):
-            for I in ti.grouped(self.velocity_backup[k]):
-                if self.velocity_backup[k][I] > 0:
-                    self.velocity[k][I] /= self.velocity_backup[k][I]
-
     def substep(self, dt):
         self.advect_markers(dt)
         self.advect_quantity(dt)
@@ -313,30 +276,6 @@ class FluidSimulator:
         self.extrap_velocity()
         self.enforce_boundary()
 
-    def apic_substep(self, dt):
-        self.level_set.build_from_markers()
-        self.apply_markers()
-
-        for k in range(self.dim):
-            self.velocity[k].fill(0)
-            self.velocity_backup[k].fill(0)
-        self.transfer_to_grid()
-        self.extrap_velocity()
-        self.enforce_boundary()
-
-        self.add_gravity(dt)
-        self.enforce_boundary()
-
-        self.solve_pressure(dt)
-
-        if self.verbose:
-            prs = np.max(self.pressure.to_numpy())
-            print(f'\033[36mMax pressure: {prs}\033[0m')
-
-        self.apply_pressure(dt)
-        self.update_from_grid()
-        self.advect_markers(dt)
-
     def run(self, max_steps, visualizer, verbose = True):
         self.verbose = verbose
         step = 0
@@ -344,8 +283,7 @@ class FluidSimulator:
         while step < max_steps or max_steps == -1:
             print(f'Current progress: ({step} / {max_steps})')
             for substep in range(self.substeps):
-                if self.solver_type == APIC: self.apic_substep(self.dt)
-                else: self.substep(self.dt)
+                self.substep(self.dt)
             visualizer.visualize(self)
             step += 1
 
@@ -363,9 +301,6 @@ class FluidSimulator:
                 for offset in ti.static(ti.grouped(ti.ndrange(*((0, 2), ) * self.dim))):
                     num = ti.atomic_add(self.total_mk[None], 1)
                     self.p_x[num] = (I + (offset + [ti.random() for _ in ti.static(range(self.dim))]) / 2) * self.dx
-                    self.p_v[num] = ti.zero(self.p_v[num])
-                    for k in ti.static(range(self.dim)):
-                        self.p_cp[k][num] = ti.zero(self.p_cp[k][num])
 
     @ti.kernel
     def reinitialize(self):
