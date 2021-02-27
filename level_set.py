@@ -138,6 +138,7 @@ class LevelSet:
             phi_avg /= tot
             phi[I] = phi_avg if phi_avg < phi_temp[I] else phi_temp[I]
 
+
 # J. Sethian. A fast marching level set method for monotonically ad- vancing fronts. Proc. Natl. Acad. Sci., 93:1591–1595, 1996.
 @ti.data_oriented
 class FastMarchingLevelSet(LevelSet):
@@ -229,3 +230,140 @@ class FastMarchingLevelSet(LevelSet):
         self.smoothing(self.phi, self.phi_temp)
         self.smoothing(self.phi_temp, self.phi)
         self.smoothing(self.phi, self.phi_temp)
+
+
+# H. Zhao. A fast sweeping method for Eikonal equations. Math. Comp., 74:603–627, 2005.
+@ti.data_oriented
+class FastSweepingLevelSet(LevelSet):
+    def __init__(self, dim, res, dx, real):
+        super().__init__(dim, res, dx, real)
+
+        self.repeat_times = 2
+
+    @ti.func
+    def propagate_update(self, I, s):
+        if self.valid[I] == -1:
+            d = self.update_from_neighbor(I)
+            if ti.abs(d) < ti.abs(self.phi_temp[I]): self.phi_temp[I] = d * ts.sign(self.phi[I])
+        return s
+
+    @ti.func
+    def markers_propagate_update(self, markers, lI, o, s):
+        I, offset = ti.Vector(lI), ti.Vector(o)
+        if all(I + offset >= 0) and all(I + offset < self.res):
+            d = (markers[self.valid[I + offset]] - (I + 0.5) * self.dx).norm()
+            if d < self.phi[I]:
+                self.phi[I] = d
+                self.valid[I] = self.valid[I + o]
+        return s
+
+    @ti.kernel
+    def propagate(self):
+        if ti.static(self.dim == 2):
+            for t in ti.static(range(self.repeat_times)):
+                for i in range(self.res[0]):
+                    j = 0
+                    while j < self.res[1]: j += self.propagate_update([i, j], 1)
+
+                for i in range(self.res[0]):
+                    j = self.res[1] - 1
+                    while j >= 0: j += self.propagate_update([i, j], -1)
+            
+                for j in range(self.res[1]):
+                    i = 0
+                    while i < self.res[1]: i += self.propagate_update([i, j], 1)
+
+                for j in range(self.res[1]):
+                    i = self.res[1] - 1
+                    while i >= 0: i += self.propagate_update([i, j], -1)
+
+        if ti.static(self.dim == 3):
+            for t in ti.static(range(self.repeat_times)):
+                for i, j in ti.ndrange(self.res[0], self.res[1]):
+                    k = 0
+                    while k < self.res[2]: k += self.propagate_update([i, j, k], 1)
+
+                for i, j in ti.ndrange(self.res[0], self.res[1]):
+                    k = self.res[2] - 1
+                    while k >= 0: k += self.propagate_update([i, j, k], -1)
+
+                for i, k in ti.ndrange(self.res[0], self.res[2]):
+                    j = 0
+                    while j < self.res[1]: j += self.propagate_update([i, j, k], 1)
+
+                for i, k in ti.ndrange(self.res[0], self.res[2]):
+                    j = self.res[1] - 1
+                    while j >= 0: j += self.propagate_update([i, j, k], -1)
+
+                for j, k in ti.ndrange(self.res[1], self.res[2]):
+                    i = 0
+                    while i < self.res[1]: i += self.propagate_update([i, j, k], 1)
+
+                for j, k in ti.ndrange(self.res[1], self.res[2]):
+                    i = self.res[0] - 1
+                    while i >= 0: i += self.propagate_update([i, j, k], -1)
+
+    def redistance(self):
+        self.valid.fill(-1)
+        self.target_surface()
+        self.propagate()
+        self.phi.copy_from(self.phi_temp)
+
+    @ti.kernel
+    def markers_propagate(self, markers : ti.template(), total_mk : ti.template()):
+        if ti.static(self.dim == 2):
+            for t in ti.static(range(self.repeat_times)):
+                for i in range(self.res[0]):
+                    j = 0
+                    while j < self.res[1]: j += self.markers_propagate_update(markers, [i, j], [0, 1], 1)
+
+                for i in range(self.res[0]):
+                    j = self.res[1] - 1
+                    while j >= 0: j += self.markers_propagate_update(markers, [i, j], [0, -1], -1)
+            
+                for j in range(self.res[1]):
+                    i = 0
+                    while i < self.res[1]: i += self.markers_propagate_update(markers, [i, j], [1, 0], 1)
+
+                for j in range(self.res[1]):
+                    i = self.res[1] - 1
+                    while i >= 0: i += self.markers_propagate_update(markers, [i, j], [-1, 0], -1)
+
+        if ti.static(self.dim == 3):
+            for t in ti.static(range(self.repeat_times)):
+                for i, j in ti.ndrange(self.res[0], self.res[1]):
+                    k = 0
+                    while k < self.res[2]: k += self.markers_propagate_update(markers, [i, j, k], [0, 0, 1], 1)
+
+                for i, j in ti.ndrange(self.res[0], self.res[1]):
+                    k = self.res[2] - 1
+                    while k >= 0: k += self.markers_propagate_update(markers, [i, j, k], [0, 0, -1], -1)
+
+                for i, k in ti.ndrange(self.res[0], self.res[2]):
+                    j = 0
+                    while j < self.res[1]: j += self.markers_propagate_update(markers, [i, j, k], [0, 1, 0], 1)
+
+                for i, k in ti.ndrange(self.res[0], self.res[2]):
+                    j = self.res[1] - 1
+                    while j >= 0: j += self.markers_propagate_update(markers, [i, j, k], [0, -1, 0], -1)
+
+                for j, k in ti.ndrange(self.res[1], self.res[2]):
+                    i = 0
+                    while i < self.res[1]: i += self.markers_propagate_update(markers, [i, j, k], [1, 0, 0], 1)
+
+                for j, k in ti.ndrange(self.res[1], self.res[2]):
+                    i = self.res[0] - 1
+                    while i >= 0: i += self.markers_propagate_update(markers, [i, j, k], [-1, 0, 0], -1)
+
+    def build_from_markers(self, markers, total_mk):
+        self.phi.fill(1e20)
+        self.valid.fill(-1)
+        self.distance_to_markers(markers, total_mk)
+        self.markers_propagate(markers, total_mk)
+        self.valid.fill(-1)
+        self.target_minus()
+        self.propagate()
+        self.smoothing(self.phi, self.phi_temp)
+        self.smoothing(self.phi_temp, self.phi)
+        self.smoothing(self.phi, self.phi_temp)
+

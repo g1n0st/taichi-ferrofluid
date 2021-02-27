@@ -4,7 +4,7 @@ import utils
 from utils import *
 from mgpcg import MGPCGPoissonSolver
 from pressure_project import PressureProjectStrategy
-from level_set import FastMarchingLevelSet
+from level_set import FastMarchingLevelSet, FastSweepingLevelSet
 
 from functools import reduce
 import time
@@ -14,6 +14,9 @@ ti.init(arch=ti.cuda, kernel_profiler=True)
 
 ADVECT_REDISTANCE = 0
 MARKERS = 1
+
+FAST_SWEEPING_METHOD = 0
+FAST_MARCHING_METHOD = 1
 
 @ti.data_oriented
 class FluidSimulator:
@@ -66,7 +69,14 @@ class FluidSimulator:
             ti.root.dense(indices, [res[_] + (d == _) for _ in range(self.dim)]).place(self.velocity[d], self.velocity_backup[d])
         
         # Level-Set
-        self.level_set = FastMarchingLevelSet(self.dim, 
+        self.loop_order = FAST_SWEEPING_METHOD
+        if self.loop_order == FAST_SWEEPING_METHOD:
+            self.level_set = FastSweepingLevelSet(self.dim, 
+                                  self.res, 
+                                  self.dx, 
+                                  self.real)
+        else:
+            self.level_set = FastMarchingLevelSet(self.dim, 
                                   self.res, 
                                   self.dx, 
                                   self.real)
