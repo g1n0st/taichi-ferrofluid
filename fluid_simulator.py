@@ -4,7 +4,7 @@ import utils
 from utils import *
 from mgpcg import MGPCGPoissonSolver
 from pressure_project import PressureProjectStrategy
-from level_set import LevelSet
+from level_set import FastMarchingLevelSet
 
 from functools import reduce
 import time
@@ -66,11 +66,9 @@ class FluidSimulator:
             ti.root.dense(indices, [res[_] + (d == _) for _ in range(self.dim)]).place(self.velocity[d], self.velocity_backup[d])
         
         # Level-Set
-        self.level_set = LevelSet(self.dim, 
+        self.level_set = FastMarchingLevelSet(self.dim, 
                                   self.res, 
                                   self.dx, 
-                                  self.p_x,
-                                  self.total_mk,
                                   self.real)
 
         # MGPCG
@@ -248,7 +246,7 @@ class FluidSimulator:
         self.update_quantity()
 
         if self.solver_type == MARKERS:
-            self.level_set.build_from_markers()
+            self.level_set.build_from_markers(self.p_x, self.total_mk)
         else:
             self.level_set.redistance()
 
