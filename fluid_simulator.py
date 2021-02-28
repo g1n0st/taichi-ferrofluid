@@ -5,6 +5,7 @@ from utils import *
 from mgpcg import MGPCGPoissonSolver
 from pressure_project import PressureProjectStrategy
 from level_set import FastMarchingLevelSet, FastSweepingLevelSet
+from surface_tension import SurfaceTension
 
 from functools import reduce
 import time
@@ -97,6 +98,9 @@ class FluidSimulator:
         # Pressure Solve
         self.ghost_fluid_method = True # Gibou et al. [GFCK02]
         self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi)
+
+        # capillary surface tension [Zheng et al. 2006]
+        self.surface_tension = SurfaceTension(simulator = self)
 
     @ti.func
     def is_valid(self, I):
@@ -274,11 +278,21 @@ class FluidSimulator:
         self.enforce_boundary()
 
         self.solve_pressure(dt)
-
         if self.verbose:
             prs = np.max(self.pressure.to_numpy())
             print(f'\033[36mMax pressure: {prs}\033[0m')
+        self.apply_pressure(dt)
 
+        # Apply the capillary surface tension on the interface using a semi-implicit method
+        self.surface_tension.solve_surface_tension()
+        self.extrap_velocity()
+        self.enforce_boundary()
+       
+        # Apply another projection step to enforce the divergence-free condition for the final state
+        self.solve_pressure(dt)
+        if self.verbose:
+            prs = np.max(self.pressure.to_numpy())
+            print(f'\033[36mMax pressure: {prs}\033[0m')
         self.apply_pressure(dt)
 
         self.extrap_velocity()
