@@ -18,7 +18,25 @@ class LevelSet:
         self.valid = ti.field(dtype=ti.i32, shape=res) # indices to the closest points / reuse as visit sign
         self.phi = ti.field(dtype=real, shape=res)
         self.phi_temp = ti.field(dtype=real, shape=res)
- 
+
+        self.eps = 0.95 * self.dx # the "thickness" of the interface, O(∆x) and is smaller than the local feature size
+
+    @ti.func
+    def theta(self, phi): # smoothed step Heaviside function
+        theta = ti.cast(0, self.real)
+        if phi <= -self.eps: theta = 0
+        elif phi >= self.eps: theta = 1
+        else: theta = 1/2 + phi/(2*self.eps) + 1/(2*ts.pi) * ti.sin(ts.pi*phi/self.eps)
+        return theta
+
+    @ti.func
+    def delta(self, phi): # smoothed regular Dirac delta function
+        delta = ti.cast(0, self.real)
+        if phi <= -self.eps or phi >= self.eps: delta = 0
+        else: delta = (1 + ti.cos(ts.pi*phi/self.eps)) / (2*self.eps)
+        return delta
+
+
     @ti.func
     def distance_of_aabb(self, x, x0, x1):
         phi = ti.cast(0, self.real)
@@ -101,7 +119,7 @@ class LevelSet:
     @ti.kernel
     def target_minus(self):
         for I in ti.grouped(self.phi):
-            self.phi[I] -= (0.99 * self.dx)
+            self.phi[I] -= (0.99 * self.dx) # the particle radius r (typically just a little less than the grid cell size dx)
 
         for I in ti.grouped(self.phi):
             sign_change = False
