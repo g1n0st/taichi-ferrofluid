@@ -33,6 +33,16 @@ class Visualizer2D:
             if p > 0: self.color_buffer[i, j] = ti.Vector([p, 0, 0])
             else: self.color_buffer[i, j] = ti.Vector([0, 0, -p])
 
+    @ti.kernel
+    def fill_normal(self, grid_res : ti.template(), n : ti.template()):
+        for i, j in self.color_buffer:
+            x = int((i + 0.5) / self.res * grid_res[0])
+            y = int((j + 0.5) / self.res * grid_res[1])
+
+            r = (n[x, y][0] + 1) * 0.5
+            g = (n[x, y][1] + 1) * 0.5
+            self.color_buffer[i, j] = ti.Vector([r, g, 0])
+
     def visualize_pressure(self, simulator):
         self.fill_pressure(simulator.res, simulator.pressure)
         img = self.color_buffer.to_numpy()
@@ -41,6 +51,12 @@ class Visualizer2D:
 
     def visualize_levelset(self, simulator):
         self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx, simulator.level_set.valid)
+        img = self.color_buffer.to_numpy()
+        self.gui.set_image(img)
+        self.gui.show()
+
+    def visualize_normal(self, simulator):
+        self.fill_normal(simulator.res, simulator.surface_tension.n)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
         self.gui.show()
@@ -62,4 +78,6 @@ class Visualizer2D:
             self.visualize_particles(simulator)
         elif self.mode == 'levelset':
             self.visualize_levelset(simulator)
+        elif self.mode == 'normal':
+            self.visualize_normal(simulator)
 
