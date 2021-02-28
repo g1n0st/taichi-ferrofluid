@@ -55,3 +55,8 @@ def splat(data, weights, v, pos, cp):
             W *= (1 - w[k]) if u[k] == 0 else w[k]
         data[I] += (v + cp.dot(dpos)) * W
         weights[I] += W
+
+@ti.kernel
+def copy(src : ti.template(), dst : ti.template()):
+    for I in ti.grouped(src):
+        dst[I] = src[I]
