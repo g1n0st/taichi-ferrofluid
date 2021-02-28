@@ -86,6 +86,13 @@ class MGPCGPoissonSolver:
             self.init_gridtype(self.grid_type[l - 1], self.grid_type[l])
             strategy.build_A(self, l)
 
+    def full_reinitialize(self, strategy):
+        self.initialize()
+        strategy.build_b(self)
+        for l in range(self.n_mg_levels):
+            self.grid_type[l].fill(utils.FLUID)
+            strategy.build_A(self, l)
+
     @ti.func
     def neighbor_sum(self, Ax, x, I):
         ret = ti.cast(0.0, self.real)
