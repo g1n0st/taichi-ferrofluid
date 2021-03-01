@@ -5,12 +5,14 @@ import numpy as np
 
 @ti.data_oriented
 class Visualizer2D:
-    def __init__(self, res, mode):
+    def __init__(self, res, mode, output):
         self.grid_res = res
         self.res = 512
         self.mode = mode
         self.gui = ti.GUI("demo", (self.res, self.res))
         self.color_buffer = ti.Vector.field(3, dtype=ti.f32, shape=(self.res, self.res))
+        self.output = output
+        self.frame = 0
     
     @ti.kernel
     def fill_pressure(self, grid_res : ti.template(), p : ti.template()):
@@ -47,19 +49,16 @@ class Visualizer2D:
         self.fill_pressure(simulator.res, simulator.pressure)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
-        self.gui.show()
 
     def visualize_levelset(self, simulator):
         self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx, simulator.level_set.valid)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
-        self.gui.show()
 
     def visualize_normal(self, simulator):
         self.fill_normal(simulator.res, simulator.surface_tension.n)
         img = self.color_buffer.to_numpy()
         self.gui.set_image(img)
-        self.gui.show()
     
     def visualize_particles(self, simulator):
         bg_color = 0x000000
@@ -69,7 +68,6 @@ class Visualizer2D:
         
         self.gui.clear(bg_color)
         self.gui.circles(pos / (self.grid_res * simulator.dx), radius=particle_radius, color=particle_color)
-        self.gui.show()
 
     def visualize(self, simulator):
         if self.mode == 'pressure':
@@ -80,4 +78,11 @@ class Visualizer2D:
             self.visualize_levelset(simulator)
         elif self.mode == 'normal':
             self.visualize_normal(simulator)
+
+        if self.output:
+            self.gui.show(f'{self.frame:06d}.png')
+        else:
+            self.gui.show()
+
+        self.frame += 1
 
