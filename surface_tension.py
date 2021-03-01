@@ -81,12 +81,12 @@ class SurfaceTensionStrategy:
                 unit = ti.Vector.unit(self.dim, k)
                 if I[k] + 1 < self.res[k]:
                     Ax[I][k] = -scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, (I + unit + offset) * (2 ** level)))
+                        utils.sample(self.simulator.level_set.phi, (I + unit * 0.5 + offset) * (2 ** level)))
                     Adiag[I] += scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, (I + offset) * (2 ** level)))
+                        utils.sample(self.simulator.level_set.phi, (I + unit * 0.5 + offset) * (2 ** level)))
                 if I[k] - 1 >= 0:
                     Adiag[I] += scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, (I + offset) * (2 ** level)))
+                        utils.sample(self.simulator.level_set.phi, (I - unit * 0.5 + offset) * (2 ** level)))
 
     def build_A(self, solver : MGPCGPoissonSolver, level):
         self.build_A_kernel(solver.Adiag[level], solver.Ax[level], level)
@@ -116,7 +116,6 @@ class SurfaceTension:
     def calc_n(self, d : ti.template(), phi : ti.template()):
         offset = 0.5 * (1 - ti.Vector.unit(self.dim, d))
         for I in ti.grouped(self.n):
-            # self.kappa[I] = ti.zero(self.kappa[I])
             for k in ti.static(range(self.dim)):
                 unit = ti.Vector.unit(self.dim, k)
                 self.n[I][k] = \
