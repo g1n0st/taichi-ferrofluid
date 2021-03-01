@@ -282,6 +282,8 @@ class FluidSimulator:
             prs = np.max(self.pressure.to_numpy())
             print(f'\033[36mMax pressure: {prs}\033[0m')
         self.apply_pressure(dt)
+        self.extrap_velocity()
+        self.enforce_boundary()
 
         # Apply the capillary surface tension on the interface using a semi-implicit method
         self.surface_tension.solve_surface_tension()
