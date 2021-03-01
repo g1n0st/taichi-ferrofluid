@@ -32,11 +32,13 @@ class SurfaceTensionStrategy:
             grad_u = ti.Vector.zero(self.real, self.dim)
             for k in ti.static(range(self.dim)):
                 unit = ti.Vector.unit(self.dim, k)
-                grad_u[k] -= velocity[I]
-                if I[k] + 1 < self.res[k]: grad_u[k] += velocity[I + unit]
-                grad_u[k] /= self.dx
+                # grad_u[k] -= velocity[I]
+                # if I[k] + 1 < self.res[k]: grad_u[k] += velocity[I + unit]
+                # grad_u[k] /= self.dx
+                grad_u[k] += (utils.sample(velocity, I + unit * 0.5) - \
+                                utils.sample(velocity, I - unit * 0.5)) / self.dx
             Du_Dn = grad_u.dot(n[I])
-
+            
             # calculate D2u/Dn2
             D2 = ti.Matrix.zero(self.real, self.dim, self.dim)
             for k in ti.static(range(self.dim)):
@@ -49,10 +51,15 @@ class SurfaceTensionStrategy:
                 for k2 in ti.static(range(self.dim)):
                     unit1 = ti.Vector.unit(self.dim, k1)
                     unit2 = ti.Vector.unit(self.dim, k2)
-                    v00 = velocity[I]
-                    v10 = velocity[I + unit1] if I[k1] + 1 < self.res[k1] else 0
-                    v01 = velocity[I + unit2] if I[k2] + 1 < self.res[k2] else 0
-                    v11 = velocity[I + unit1 + unit2] if I[k1] + 1 < self.res[k1] and I[k2] + 1 < self.res[k2] else 0
+                    # v00 = velocity[I]
+                    # v10 = velocity[I + unit1] if I[k1] + 1 < self.res[k1] else 0
+                    # v01 = velocity[I + unit2] if I[k2] + 1 < self.res[k2] else 0
+                    # v11 = velocity[I + unit1 + unit2] if I[k1] + 1 < self.res[k1] and I[k2] + 1 < self.res[k2] else 0
+                    v00 = utils.sample(velocity, I - unit1 * 0.5 - unit2 * 0.5)
+                    v10 = utils.sample(velocity, I + unit1 * 0.5 - unit2 * 0.5)
+                    v01 = utils.sample(velocity, I - unit1 * 0.5 + unit2 * 0.5)
+                    v11 = utils.sample(velocity, I + unit1 * 0.5 + unit2 * 0.5)
+
                     D2[k1, k2] = (v11 + v00 - v10 - v01) / (self.dx ** 2)
             D2u_Dn2 = (n[I].transpose() @ D2 @ n[I])[0, 0]
 
@@ -67,7 +74,6 @@ class SurfaceTensionStrategy:
         for I in ti.grouped(Adiag):
             Adiag[I] = 1 / self.dt
 
-        '''
         offset = 0.5 * (1 - ti.Vector.unit(self.dim, self.d))
         scale = self.sigma * self.dt / (dx ** 2)
         for I in ti.grouped(Adiag):
@@ -81,7 +87,6 @@ class SurfaceTensionStrategy:
                 if I[k] - 1 >= 0:
                     Adiag[I] += scale * self.simulator.level_set.delta( \
                         utils.sample(self.simulator.level_set.phi, (I + offset) * (2 ** level)))
-        '''
 
     def build_A(self, solver : MGPCGPoissonSolver, level):
         self.build_A_kernel(solver.Adiag[level], solver.Ax[level], level)
@@ -99,7 +104,7 @@ class SurfaceTension:
         self.simulator = simulator
         self.level_set = simulator.level_set
 
-        self.poisson_solve_iterations = 10
+        self.poisson_solve_iterations = 500
         self.poisson_solver = simulator.poisson_solver
 
         self.n = ti.Vector.field(self.dim, dtype=self.real, shape=self.res) # n = grad phi / |grad phi|
