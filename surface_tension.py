@@ -27,7 +27,7 @@ class SurfaceTensionStrategy:
             b[I] = velocity[I] / self.dt
             scale = self.sigma * self.simulator.level_set.delta( \
                         utils.sample(self.simulator.level_set.phi, I + offset))
-           
+
             # calculate Du/Dn
             grad_u = ti.Vector.zero(self.real, self.dim)
             for k in ti.static(range(self.dim)):
@@ -44,7 +44,7 @@ class SurfaceTensionStrategy:
                 if I[k] - 1 >= 0: D2[k, k] += velocity[I - unit] - velocity[I]
                 if I[k] + 1 < self.res[k]: D2[k, k] += velocity[I + unit] - velocity[I]
                 D2[k, k] /= (self.dx ** 2)
-
+            
             for k1 in ti.static(range(self.dim)):
                 for k2 in ti.static(range(self.dim)):
                     unit1 = ti.Vector.unit(self.dim, k1)
@@ -67,6 +67,7 @@ class SurfaceTensionStrategy:
         for I in ti.grouped(Adiag):
             Adiag[I] = 1 / self.dt
 
+        '''
         offset = 0.5 * (1 - ti.Vector.unit(self.dim, self.d))
         scale = self.sigma * self.dt / (dx ** 2)
         for I in ti.grouped(Adiag):
@@ -74,12 +75,13 @@ class SurfaceTensionStrategy:
                 unit = ti.Vector.unit(self.dim, k)
                 if I[k] + 1 < self.res[k]:
                     Ax[I][k] = -scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, I + unit + offset))
+                        utils.sample(self.simulator.level_set.phi, (I + unit + offset) * (2 ** level)))
                     Adiag[I] += scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, I + offset))
+                        utils.sample(self.simulator.level_set.phi, (I + offset) * (2 ** level)))
                 if I[k] - 1 >= 0:
                     Adiag[I] += scale * self.simulator.level_set.delta( \
-                        utils.sample(self.simulator.level_set.phi, I + offset))
+                        utils.sample(self.simulator.level_set.phi, (I + offset) * (2 ** level)))
+        '''
 
     def build_A(self, solver : MGPCGPoissonSolver, level):
         self.build_A_kernel(solver.Adiag[level], solver.Ax[level], level)
@@ -97,7 +99,7 @@ class SurfaceTension:
         self.simulator = simulator
         self.level_set = simulator.level_set
 
-        self.poisson_solve_iterations = 500
+        self.poisson_solve_iterations = 10
         self.poisson_solver = simulator.poisson_solver
 
         self.n = ti.Vector.field(self.dim, dtype=self.real, shape=self.res) # n = grad phi / |grad phi|
@@ -106,28 +108,33 @@ class SurfaceTension:
         self.strategy = SurfaceTensionStrategy(simulator, self)
 
     @ti.kernel
-    def calc_n_kappa(self, d : ti.template(), phi : ti.template()):
+    def calc_n(self, d : ti.template(), phi : ti.template()):
         offset = 0.5 * (1 - ti.Vector.unit(self.dim, d))
         for I in ti.grouped(self.n):
-            self.kappa[I] = ti.zero(self.kappa[I])
+            # self.kappa[I] = ti.zero(self.kappa[I])
             for k in ti.static(range(self.dim)):
                 unit = ti.Vector.unit(self.dim, k)
                 self.n[I][k] = \
-                                (utils.sample(phi, I + unit + offset) - \
-                                utils.sample(phi, I - unit + offset)) / self.dx
+                                (utils.sample(phi, I + unit * 0.5 + offset) - \
+                                utils.sample(phi, I - unit * 0.5 + offset)) / self.dx
 
             norm = self.n[I].norm()
             if norm > 0: 
                 self.n[I] /= norm # conditional normalize for numerical safety
-                for k in ti.static(range(self.dim)):
-                    unit = ti.Vector.unit(self.dim, k)
-                    if I[k] - 1 >= 0: self.kappa[I] += phi[I - unit] - phi[I]
-                    if I[k] + 1 < self.res[k]: self.kappa[I] += phi[I + unit] - phi[I]
-                self.kappa[I] /= (norm * (self.dx ** 2))
+
+    @ti.kernel
+    def calc_kappa(self, d : ti.template(), phi : ti.template()):
+        for I in ti.grouped(self.kappa):
+            self.kappa[I] = ti.zero(self.kappa[I])
+            for k in ti.static(range(self.dim)):
+                unit = ti.Vector.unit(self.dim, k)
+                self.kappa[I] += (utils.sample(self.n, I + unit * 0.5) - \
+                                  utils.sample(self.n, I - unit * 0.5))[k] / self.dx
 
     def solve_surface_tension(self):
         for k in range(self.dim):
-            self.calc_n_kappa(k, self.level_set.phi)
+            self.calc_n(k, self.level_set.phi)
+            self.calc_kappa(k, self.level_set.phi)
             self.strategy.d = k
 
             start1 = time.perf_counter()
