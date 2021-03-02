@@ -29,6 +29,7 @@ class FluidSimulator:
         dx = 1.0,
         rho = 1000.0,
         gravity = [0, -9.8],
+        p0 = 1e-3,
         real = float):
 
         # ADVECT_REDISTANCE: advect the level-set with Semi-Lagrangian, then redistance it (Standard)
@@ -41,8 +42,9 @@ class FluidSimulator:
         self.dx = dx
         self.dt = dt
 
-        self.rho = rho
-        self.gravity = gravity
+        self.p0 = p0 # the standard atmospheric pressure
+        self.rho = rho # density
+        self.gravity = gravity # body force
         self.substeps = substeps
 
         # cell_type
@@ -97,7 +99,7 @@ class FluidSimulator:
 
         # Pressure Solve
         self.ghost_fluid_method = True # Gibou et al. [GFCK02]
-        self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi)
+        self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi, self.p0)
 
         # capillary surface tension [Zheng et al. 2006]
         self.surface_tension = SurfaceTension(simulator = self)
@@ -186,15 +188,15 @@ class FluidSimulator:
                         if ti.static(self.ghost_fluid_method):
                             c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I_1]
                             c = utils.clamp(c, -1e3, 1e3) # limit the coefficient
-                            self.velocity[k][I] -= scale * self.pressure[I_1] * c
-                        else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
+                            self.velocity[k][I] -= scale * (self.pressure[I_1] - self.p0) * c
+                        else: self.velocity[k][I] -= scale * (self.p0 - self.pressure[I_1])
                     # Air-Fluid
                     elif self.is_air(I_1):
                         if ti.static(self.ghost_fluid_method):
                             c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I]
                             c = utils.clamp(c, -1e3, 1e3)
-                            self.velocity[k][I] -= scale * self.pressure[I] * c
-                        else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
+                            self.velocity[k][I] -= scale * (self.pressure[I] - self.p0) * c
+                        else: self.velocity[k][I] -= scale * (self.pressure[I] - self.p0)
                     # Fluid-Fluid
                     else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
 
