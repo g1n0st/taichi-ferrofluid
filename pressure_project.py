@@ -33,12 +33,12 @@ class PressureProjectStrategy:
                             else: b[I] += self.scale_b * (self.velocity[k][I + offset] - 0)
                         elif cell_type[I + offset] == utils.AIR:
                             if ti.static(self.ghost_fluid_method):
-                                b[I] += self.scale_A * self.p0
-                            else:
                                 c = (self.phi[I] - self.phi[I + offset]) / self.phi[I]
                                 c = utils.clamp(c, -1e3, 1e3)
                                 b[I] += self.scale_A * c * self.p0
-
+                            else:
+                                b[I] += self.scale_A * self.p0
+                                
     def build_b(self, solver : MGPCGPoissonSolver):
         self.build_b_kernel(solver.grid_type[0], 
                             solver.b)
