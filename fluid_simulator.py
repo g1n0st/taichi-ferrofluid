@@ -101,7 +101,11 @@ class FluidSimulator:
 
         # Pressure Solve
         self.ghost_fluid_method = True # Gibou et al. [GFCK02]
-        self.strategy = PressureProjectStrategy(self.velocity, self.ghost_fluid_method, self.level_set.phi, self.p0)
+        self.strategy = PressureProjectStrategy(self.dim,
+                                                self.velocity,
+                                                self.ghost_fluid_method, 
+                                                self.level_set.phi, 
+                                                self.p0)
 
         # capillary surface tension [Zheng et al. 2006]
         self.surface_tension = SurfaceTension(simulator = self)
