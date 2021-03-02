@@ -256,7 +256,7 @@ class FluidSimulator:
                 self.valid_temp.copy_from(self.valid)
                 self.diffuse_quantity(self.velocity[k], self.velocity_backup[k], self.valid, self.valid_temp)
 
-    def substep(self, dt):
+    def begin_substep(self, dt):
         self.advect_markers(dt)
         self.advect_quantity(dt)
         self.update_quantity()
@@ -279,14 +279,7 @@ class FluidSimulator:
         self.extrap_velocity()
         self.enforce_boundary()
 
-        self.solve_pressure(dt)
-        if self.verbose:
-            prs = np.max(self.pressure.to_numpy())
-            print(f'\033[36mMax pressure: {prs}\033[0m')
-        self.apply_pressure(dt)
-        self.extrap_velocity()
-        self.enforce_boundary()
-
+    def end_substep(self, dt):
         # Apply the capillary surface tension on the interface using a semi-implicit method
         self.surface_tension.solve_surface_tension()
         self.extrap_velocity()
@@ -302,6 +295,19 @@ class FluidSimulator:
         self.extrap_velocity()
         self.enforce_boundary()
 
+    def substep(self, dt):
+        self.begin_substep(dt)
+
+        self.solve_pressure(dt)
+        if self.verbose:
+            prs = np.max(self.pressure.to_numpy())
+            print(f'\033[36mMax pressure: {prs}\033[0m')
+        self.apply_pressure(dt)
+        self.extrap_velocity()
+        self.enforce_boundary()
+
+        self.end_substep(dt)
+ 
     def run(self, max_steps, visualizer, verbose = True):
         self.verbose = verbose
         step = 0

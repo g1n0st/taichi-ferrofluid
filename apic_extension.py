@@ -20,8 +20,9 @@ class APICSimulator(FluidSimulator):
         dx = 1.0,
         rho = 1000.0,
         gravity = [0, -9.8],
+        p0 = 1e-3,
         real = float):
-            super().__init__(dim, res, dt, substeps, dx, rho, gravity, real)
+            super().__init__(dim, res, dt, substeps, dx, rho, gravity, p0, real)
 
             self.p_v = ti.Vector.field(dim, dtype=real) # velocities
             self.p_cp = [ti.Vector.field(dim, dtype=real) for _ in range(self.dim)] # affine-velocities
