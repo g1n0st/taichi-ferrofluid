@@ -42,6 +42,8 @@ class FluidSimulator:
         self.dx = dx
         self.dt = dt
 
+        self.total_t = 0.0 # total simulation time
+
         self.p0 = p0 # the standard atmospheric pressure
         self.rho = rho # density
         self.gravity = gravity # body force
@@ -272,13 +274,7 @@ class FluidSimulator:
         if self.verbose:
             mks = max(np.max(self.velocity[0].to_numpy()), np.max(self.velocity[1].to_numpy()))
             print(f'\033[36mMax advect velocity: {mks}\033[0m')
-
-        self.add_gravity(dt)
-        self.enforce_boundary()
-
-        self.extrap_velocity()
-        self.enforce_boundary()
-
+        
     def end_substep(self, dt):
         # Apply the capillary surface tension on the interface using a semi-implicit method
         self.surface_tension.solve_surface_tension()
@@ -295,8 +291,16 @@ class FluidSimulator:
         self.extrap_velocity()
         self.enforce_boundary()
 
+        self.total_t += self.dt
+
     def substep(self, dt):
         self.begin_substep(dt)
+
+        self.add_gravity(dt)
+        self.enforce_boundary()
+
+        self.extrap_velocity()
+        self.enforce_boundary()
 
         self.solve_pressure(dt)
         if self.verbose:

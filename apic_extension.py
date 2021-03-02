@@ -87,6 +87,8 @@ class APICSimulator(FluidSimulator):
         self.update_from_grid()
         self.advect_markers(dt)
 
+        self.total_t += self.dt
+
     @ti.kernel
     def init_markers(self):
         self.total_mk[None] = 0
