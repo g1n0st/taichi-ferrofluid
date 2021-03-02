@@ -24,14 +24,13 @@ class Visualizer2D:
             self.color_buffer[i, j] = ti.Vector([m, m, m])
 
     @ti.kernel
-    def fill_levelset(self, grid_res : ti.template(), phi : ti.template(), dx : ti.template(), valid : ti.template()):
+    def fill_levelset(self, grid_res : ti.template(), phi : ti.template(), dx : ti.template()):
         for i, j in self.color_buffer:
             x = int((i + 0.5) / self.res * grid_res[0])
             y = int((j + 0.5) / self.res * grid_res[1])
 
             p = min(phi[x, y] / (dx * grid_res[0]) * 100, 1)
 
-            # if valid[x, y] == 1: self.color_buffer[i, j] = ti.Vector([1, 1, 1])
             if p > 0: self.color_buffer[i, j] = ti.Vector([p, 0, 0])
             else: self.color_buffer[i, j] = ti.Vector([0, 0, -p])
 
@@ -45,21 +44,40 @@ class Visualizer2D:
             g = (n[x, y][1] + 1) * 0.5
             self.color_buffer[i, j] = ti.Vector([r, g, 0])
 
+    @ti.kernel
+    def visualize_kernel(self, grid_res : ti.template(), phi : ti.template(), cell_type : ti.template()):
+        for i, j in self.color_buffer:
+            fx = (i + 0.5) / self.res * grid_res[0]
+            fy = (j + 0.5) / self.res * grid_res[1]
+            x = int(fx)
+            y = int(fy)
+
+            if cell_type[x, y] == utils.SOLID: self.color_buffer[i, j] = ti.Vector([0, 0, 0])
+            elif utils.sample(phi, ti.Vector([fx, fy])) <= 0: self.color_buffer[i, j] = ti.Vector([113 / 255, 131 / 255, 247 / 255]) # fluid
+            else: self.color_buffer[i, j] = ti.Vector([0.99, 0.99, 0.99])
+
+    def set_color_buffer(self):
+        img = self.color_buffer.to_numpy()
+        self.gui.set_image(img)
+
     def visualize_pressure(self, simulator):
         self.fill_pressure(simulator.res, simulator.pressure)
-        img = self.color_buffer.to_numpy()
-        self.gui.set_image(img)
-
+        self.set_color_buffer()
+        
     def visualize_levelset(self, simulator):
-        self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx, simulator.level_set.valid)
-        img = self.color_buffer.to_numpy()
-        self.gui.set_image(img)
-
+        self.fill_levelset(simulator.res, simulator.level_set.phi, simulator.dx)
+        self.set_color_buffer()
+        
     def visualize_normal(self, simulator):
         self.fill_normal(simulator.res, simulator.surface_tension.n)
-        img = self.color_buffer.to_numpy()
-        self.gui.set_image(img)
-    
+        self.set_color_buffer()
+
+    def visual(self, simulator):
+        self.visualize_kernel(simulator.res, simulator.level_set.phi, simulator.cell_type)
+        self.set_color_buffer()
+
+        self.gui.text(f'time = {simulator.total_t:.3f}s', [0.3, 0.95], font_size = 32, color = 0x0)
+            
     def visualize_particles(self, simulator):
         bg_color = 0x000000
         particle_color = 0x0FFFFF
@@ -78,6 +96,8 @@ class Visualizer2D:
             self.visualize_levelset(simulator)
         elif self.mode == 'normal':
             self.visualize_normal(simulator)
+        elif self.mode == 'visual':
+            self.visual(simulator)
 
         if self.output:
             self.gui.show(f'{self.frame:06d}.png')
