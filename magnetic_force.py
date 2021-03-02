@@ -33,13 +33,6 @@ class MagneticForceStrategy(PressureProjectStrategy):
                             if s < 0: b[I] -= self.scale_b * (self.velocity[k][I] - 0)
                             else: b[I] += self.scale_b * (self.velocity[k][I + offset] - 0)
                         elif cell_type[I + offset] == utils.AIR:
-                            if ti.static(self.ghost_fluid_method):
-                                b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * 
-                                    (utils.sample(self.H, I + offset * 0.5).norm() ** 2))
-                            else:
-                                c = (self.phi[I] - self.phi[I + offset]) / self.phi[I]
-                                c = utils.clamp(c, -1e3, 1e3)
-                                b[I] += self.scale_A * c * (self.p0 + 1/2 * self.k * self.mu0 * 
-                                    (utils.sample(self.H, I + offset / c).norm() ** 2))
-
-
+                            if s < 0: b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I])
+                            else: b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I + offset])
+                            

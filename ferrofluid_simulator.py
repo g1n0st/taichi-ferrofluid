@@ -34,8 +34,13 @@ class FerrofluidSimulator(FluidSimulator):
             self.mu0 = mu0 # Vacuum permeability
             self.k = k # Permittivity
 
-            self.H_ext = ti.Vector.field(dim, dtype=real, shape=res) # External magnetic field intensity
-            self.H = ti.Vector.field(dim, dtype=real, shape=res) # Magnetic field intensity
+            self.H_ext = [ti.field(dtype=real) for _ in range(self.dim)] # External magnetic field intensity
+            self.H = [ti.field(dtype=real) for _ in range(self.dim)] # Magnetic field intensity
+
+            indices = ti.ijk if self.dim == 3 else ti.ij
+            for d in range(self.dim):
+                ti.root.dense(indices, [res[_] + (d == _) for _ in range(self.dim)]).place(self.H_ext[d], self.H[d])
+
             self.chi = ti.field(dtype=real, shape=res) # Magnetic susceptibility
             self.psi = ti.field(dtype=real, shape=res) # Potential function
 
@@ -45,7 +50,7 @@ class FerrofluidSimulator(FluidSimulator):
                                                                 self.dx,
                                                                 self.H_ext,
                                                                 self.chi)
-
+ 
             self.magnetic_force_strategy = MagneticForceStrategy(self.dim,
                                                                  self.velocity,
                                                                  self.ghost_fluid_method,
@@ -75,14 +80,13 @@ class FerrofluidSimulator(FluidSimulator):
 
     @ti.kernel
     def update_magnetic_field(self):
-        for I in ti.grouped(self.H):
-            self.H[I] = ti.zero(self.H[I])
-            for k in ti.static(range(self.dim)):
-                offset = ti.Vector.unit(self.dim, k)
-                if I[k] + 1 < self.res[k]: self.H[I][k] += self.psi[I + offset]
-                self.H[I][k] += -self.psi[I]
-                self.H[I][k] /= self.dx
-            self.H[I] = self.H_ext[I] - self.H[I] # H = H_ext - grad psi
+        for k in ti.static(range(self.dim)):
+            offset = ti.Vector.unit(self.dim, k)
+            for I in ti.grouped(self.H[k]):
+                self.H[k][I] = ti.zero(self.H[k][I])
+                if I[k] - 1 >= 0 and I[k] < self.res[k]: 
+                    self.H[k][I] -= (self.psi[I] - self.psi[I - offset]) / self.dx
+                self.H[k][I] += self.H_ext[k][I] # H = H_ext - grad psi
 
     def solve_magnetic_force(self, dt):
         self.magnetic_force_strategy.scale_A = dt / (self.rho * self.dx * self.dx)
@@ -111,33 +115,21 @@ class FerrofluidSimulator(FluidSimulator):
                     if self.is_solid(I_1) or self.is_solid(I): self.velocity[k][I] = 0
                     # FLuid-Air
                     elif self.is_air(I): 
-                        if ti.static(self.ghost_fluid_method):
-                            c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I_1]
-                            c = utils.clamp(c, -1e3, 1e3) # limit the coefficient
-                            self.velocity[k][I] -= scale * \
-                            (self.pressure[I_1] - \
-                            (self.p0 + 1/2 * self.k * self.mu0 * (utils.sample(self.H, I_1 - unit / c).norm() ** 2))) * c
-                        else: self.velocity[k][I] -= scale * ( \
-                            (self.p0 + 1/2 * self.k * self.mu0 * (utils.sample(self.H, I_1 + unit * 0.5).norm() ** 2)) \
+                        self.velocity[k][I] -= scale * ( \
+                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I] ** 2) \
                             - self.pressure[I_1])
                     # Air-Fluid
                     elif self.is_air(I_1):
-                        if ti.static(self.ghost_fluid_method):
-                            c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I]
-                            c = utils.clamp(c, -1e3, 1e3)
-                            self.velocity[k][I] -= scale * \
-                            (self.pressure[I] - \
-                            (self.p0 + 1/2 * self.k * self.mu0 * (utils.sample(self.H, I - unit / c).norm() ** 2))) * c
-                        else: self.velocity[k][I] -= scale * ( \
+                        self.velocity[k][I] -= scale * ( \
                             self.pressure[I] - \
-                            (self.p0 + 1/2 * self.k * self.mu0 * (utils.sample(self.H, I - unit * 0.5).norm() ** 2)))
+                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I] ** 2))
                     # Fluid-Fluid
                     else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
 
     @ti.kernel
     def external_H(self): # external_H, unit tester
-        for I in ti.grouped(self.H_ext):
-            self.H_ext[I] = ti.Vector([0, 1e3])
+        for I in ti.grouped(self.H_ext[1]):
+            self.H_ext[1][I] = 1.2e4
 
     def substep(self, dt):
         self.external_H()
@@ -148,11 +140,9 @@ class FerrofluidSimulator(FluidSimulator):
         self.update_magnetic_field() # Update the magnetic field H
 
         if self.verbose:
-            chi = np.max(self.chi.to_numpy())
             psi = np.max(self.psi.to_numpy())
-            print(f'\033[36mMax chi: {chi}\033[0m')
             print(f'\033[36mMax psi: {psi}\033[0m')
-            
+
         self.add_gravity(dt)
         self.enforce_boundary()
         self.extrap_velocity()
