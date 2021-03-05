@@ -1,4 +1,5 @@
 import taichi as ti
+import taichi_glsl as ts
 
 import utils
 from utils import *
@@ -6,6 +7,7 @@ from mgpcg import MGPCGPoissonSolver
 from pressure_project import PressureProjectStrategy
 from level_set import FastMarchingLevelSet, FastSweepingLevelSet
 from surface_tension import SurfaceTension
+from volume_control import PressureProjectWithVolumeControlStrategy
 
 from functools import reduce
 import time
@@ -106,6 +108,13 @@ class FluidSimulator:
                                                 self.ghost_fluid_method, 
                                                 self.level_set.phi, 
                                                 self.p0)
+        self.volume_control_stragtegy = PressureProjectWithVolumeControlStrategy(self.dim,
+                                                                                 self.velocity,
+                                                                                 self.ghost_fluid_method, 
+                                                                                 self.level_set.phi, 
+                                                                                 self.p0,
+                                                                                 self.level_set,
+                                                                                 self.dt) # [Losasso et al. 2008]
 
         # capillary surface tension [Zheng et al. 2006]
         self.surface_tension = SurfaceTension(simulator = self)
@@ -165,12 +174,12 @@ class FluidSimulator:
                     self.velocity[k][I] = 0
                     self.velocity[k][I + ti.Vector.unit(self.dim, k)] = 0
 
-    def solve_pressure(self, dt):
-        self.strategy.scale_A = dt / (self.rho * self.dx * self.dx)
-        self.strategy.scale_b = 1 / self.dx
+    def solve_pressure(self, dt, strategy):
+        strategy.scale_A = dt / (self.rho * self.dx * self.dx)
+        strategy.scale_b = 1 / self.dx
 
         start1 = time.perf_counter()
-        self.poisson_solver.reinitialize(self.cell_type, self.strategy)
+        self.poisson_solver.reinitialize(self.cell_type, strategy)
         end1 = time.perf_counter()
 
         start2 = time.perf_counter()
@@ -286,7 +295,7 @@ class FluidSimulator:
         self.enforce_boundary()
        
         # Apply another projection step to enforce the divergence-free condition for the final state
-        self.solve_pressure(dt)
+        self.solve_pressure(dt, self.volume_control_stragtegy) # with a volume correction term
         if self.verbose:
             prs = np.max(self.pressure.to_numpy())
             print(f'\033[36mMax pressure: {prs}\033[0m')
@@ -306,7 +315,7 @@ class FluidSimulator:
         self.extrap_velocity()
         self.enforce_boundary()
 
-        self.solve_pressure(dt)
+        self.solve_pressure(dt, self.strategy)
         if self.verbose:
             prs = np.max(self.pressure.to_numpy())
             print(f'\033[36mMax pressure: {prs}\033[0m')
