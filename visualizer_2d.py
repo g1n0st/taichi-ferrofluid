@@ -45,6 +45,15 @@ class Visualizer2D:
             self.color_buffer[i, j] = ti.Vector([r, g, 0])
 
     @ti.kernel
+    def fill_psi(self, grid_res : ti.template(), psi : ti.template(), mx : ti.template()):
+        for i, j in self.color_buffer:
+            x = int((i + 0.5) / self.res * grid_res[0])
+            y = int((j + 0.5) / self.res * grid_res[1])
+
+            p = psi[x, y] / mx
+            self.color_buffer[i, j] = ti.Vector([p, 0, 0])
+
+    @ti.kernel
     def visualize_kernel(self, grid_res : ti.template(), phi : ti.template(), cell_type : ti.template()):
         for i, j in self.color_buffer:
             fx = (i + 0.5) / self.res * grid_res[0]
@@ -70,6 +79,10 @@ class Visualizer2D:
         
     def visualize_normal(self, simulator):
         self.fill_normal(simulator.res, simulator.surface_tension.n)
+        self.set_color_buffer()
+
+    def visualize_psi(self, simulator):
+        self.fill_psi(simulator.res, simulator.psi, 50000)
         self.set_color_buffer()
 
     def visual(self, simulator):
@@ -98,6 +111,8 @@ class Visualizer2D:
             self.visualize_normal(simulator)
         elif self.mode == 'visual':
             self.visual(simulator)
+        elif self.mode == 'psi':
+            self.visualize_psi(simulator)
 
         if self.output:
             self.gui.show(f'{self.frame:06d}.png')
