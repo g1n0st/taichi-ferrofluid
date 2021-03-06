@@ -19,7 +19,7 @@ class LevelSet:
         self.phi = ti.field(dtype=real, shape=res)
         self.phi_temp = ti.field(dtype=real, shape=res)
 
-        self.eps = 10 * self.dx # the "thickness" of the interface, O(∆x) and is smaller than the local feature size
+        self.eps = 5 * self.dx # the "thickness" of the interface, O(∆x) and is smaller than the local feature size
 
     @ti.func
     def theta(self, phi): # smoothed step Heaviside function
