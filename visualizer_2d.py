@@ -29,7 +29,7 @@ class Visualizer2D:
         for i, j in self.color_buffer:
             x, y = self.ij_to_xy(i, j)
 
-            p = min(phi[x, y] / (dx * grid_res[0]) * 1e2, 1)
+            p = min(phi[x, y] / (dx * self.grid_res) * 1e2, 1)
             if p > 0: self.color_buffer[i, j] = ti.Vector([p, 0, 0])
             else: self.color_buffer[i, j] = ti.Vector([0, 0, -p])
 
@@ -53,12 +53,11 @@ class Visualizer2D:
     @ti.kernel
     def visualize_kernel(self, phi : ti.template(), cell_type : ti.template()):
         for i, j in self.color_buffer:
-            fx, fy = self.ij_to_xy(i, j)
-            x, y = int(fx), int(fy)
+            x, y = self.ij_to_xy(i, j)
 
             if cell_type[x, y] == utils.SOLID: 
                 self.color_buffer[i, j] = ti.Vector([0, 0, 0])
-            elif utils.sample(phi, ti.Vector([fx, fy])) <= 0: 
+            elif phi[x, y] <= 0: 
                 self.color_buffer[i, j] = ti.Vector([113 / 255, 131 / 255, 247 / 255]) # fluid
             else: 
                 self.color_buffer[i, j] = ti.Vector([1, 1, 1])
@@ -97,7 +96,7 @@ class GUIVisualizer2D(Visualizer2D):
     @ti.kernel
     def fill_H(self, Hx : ti.template(), Hy : ti.template()):
         for i, j in self.color_buffer:
-            x, y = int(fx), int(fy)
+            x, y = self.ij_to_xy(i, j)
 
             if ti.abs(Hx[x, y]) < 1e-4 and ti.abs(Hy[x, y]) < 1e-4:
                 self.angle_x[x, y] = 0
@@ -109,7 +108,7 @@ class GUIVisualizer2D(Visualizer2D):
 
     def visualize(self, simulator):
         if self.mode == 'H':
-            self.fill_H(simulator.res, simulator.H[0], simulator.H[1])
+            self.fill_H(simulator.H[0], simulator.H[1])
             angle_x = self.angle_x.to_numpy()
             angle_y = self.angle_y.to_numpy()
             unit = 0.35 / self.grid_res
