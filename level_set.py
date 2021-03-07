@@ -59,6 +59,11 @@ class LevelSet:
             self.phi[I] = self.distance_of_aabb((I + 0.5) * self.dx, x0, x1)
 
     @ti.kernel
+    def initialize_with_sphere(self, x0 : ti.template(), r : ti.template()):
+        for I in ti.grouped(self.phi):
+            self.phi[I] = ((I + 0.5) * self.dx - x0).norm() - r
+
+    @ti.kernel
     def target_surface(self):
         for I in ti.grouped(self.phi):
             sign_change = False
