@@ -31,7 +31,7 @@ class PotentialFunctionStrategy:
                     if self.in_domain(I - unit):
                         b[I] -= utils.sample(self.chi, I + offset) * self.H_ext[k][I]
 
-                b[I] /= self.dx
+                # b[I] /= self.dx
 
     def build_b(self, solver : MGPCGPoissonSolver):
         self.build_b_kernel(solver.grid_type[0],
@@ -45,14 +45,14 @@ class PotentialFunctionStrategy:
         dx = self.dx * (2 ** level)
 
         for I in ti.grouped(Adiag):
-            if all(I == 0): Adiag[I] = 1 # choose a reference point, where psi(p)=0
+            if all(I == 0): Adiag[I] = 1 / dx # choose a reference point, where psi(p)=0
             elif self.in_domain(I):
                 for k in ti.static(range(self.dim)):
                         for s in ti.static((-1, 1)):
                             offset = ti.Vector.unit(self.dim, k) * s
                             if self.in_domain(I + offset): # magnetic shielding
-                                Adiag[I] -= (1 + utils.sample(self.chi, (I + offset * 0.5) * (2 ** level)))
-                                if ti.static(s > 0): Ax[I][k] = (1 + utils.sample(self.chi, (I + offset * 0.5) * (2 ** level)))
+                                Adiag[I] -= (1 + utils.sample(self.chi, (I + offset * 0.5) * (2 ** level))) / dx
+                                if ti.static(s > 0): Ax[I][k] = (1 + utils.sample(self.chi, (I + offset * 0.5) * (2 ** level))) / dx
 
     def build_A(self, solver : MGPCGPoissonSolver, level):
         self.build_A_kernel(level, 
