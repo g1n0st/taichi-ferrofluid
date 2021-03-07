@@ -116,7 +116,7 @@ class FerrofluidSimulator(FluidSimulator):
                     # FLuid-Air
                     elif self.is_air(I): 
                         self.velocity[k][I] -= scale * ( \
-                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I] ** 2) \
+                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I_1] ** 2) \
                             - self.pressure[I_1])
                     # Air-Fluid
                     elif self.is_air(I_1):
