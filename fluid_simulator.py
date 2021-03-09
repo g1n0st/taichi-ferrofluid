@@ -201,16 +201,14 @@ class FluidSimulator:
                     # FLuid-Air
                     elif self.is_air(I): 
                         if ti.static(self.ghost_fluid_method):
-                            c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I_1]
-                            c = utils.clamp(c, -1e3, 1e3) # limit the coefficient
-                            self.velocity[k][I] -= scale * (self.pressure[I_1] - self.p0) * c
+                            c = (self.level_set.phi[I_1] - self.level_set.phi[I]) / self.level_set.phi[I_1]
+                            self.velocity[k][I] -= scale * (self.p0 - self.pressure[I_1]) * min(c, 1e3) # # limit the coefficient
                         else: self.velocity[k][I] -= scale * (self.p0 - self.pressure[I_1])
                     # Air-Fluid
                     elif self.is_air(I_1):
                         if ti.static(self.ghost_fluid_method):
                             c = (self.level_set.phi[I] - self.level_set.phi[I_1]) / self.level_set.phi[I]
-                            c = utils.clamp(c, -1e3, 1e3)
-                            self.velocity[k][I] -= scale * (self.pressure[I] - self.p0) * c
+                            self.velocity[k][I] -= scale * (self.pressure[I] - self.p0) * min(c, 1e3)
                         else: self.velocity[k][I] -= scale * (self.pressure[I] - self.p0)
                     # Fluid-Fluid
                     else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])

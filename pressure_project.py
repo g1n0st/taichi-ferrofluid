@@ -34,8 +34,7 @@ class PressureProjectStrategy:
                         elif cell_type[I + offset] == utils.AIR:
                             if ti.static(self.ghost_fluid_method):
                                 c = (self.phi[I] - self.phi[I + offset]) / self.phi[I]
-                                c = utils.clamp(c, -1e3, 1e3)
-                                b[I] += self.scale_A * c * self.p0
+                                b[I] += self.scale_A * min(c, 1e3) * self.p0
                             else:
                                 b[I] += self.scale_A * self.p0
                                 
@@ -60,8 +59,7 @@ class PressureProjectStrategy:
                         elif grid_type[I + offset] == utils.AIR:
                             if ti.static(self.ghost_fluid_method and level == 0):
                                 c = (self.phi[I] - self.phi[I + offset]) / self.phi[I]
-                                c = utils.clamp(c, -1e3, 1e3)
-                                Adiag[I] += self.scale_A * c
+                                Adiag[I] += self.scale_A * min(c, 1e3)
                             else:
                                 Adiag[I] += self.scale_A
 
