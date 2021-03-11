@@ -51,6 +51,14 @@ class Visualizer2D:
             self.color_buffer[i, j] = ti.Vector([p, p, p])
 
     @ti.kernel
+    def fill_kappa(self, kappa : ti.template(), min_kappa : ti.f32, max_kappa : ti.f32):
+        for i, j in self.color_buffer:
+            x, y = self.ij_to_xy(i, j)
+
+            p = (kappa[x, y] - min_kappa) / (max_kappa - min_kappa) # mapping to [0, 1]
+            self.color_buffer[i, j] = ti.Vector([p, p, p])
+
+    @ti.kernel
     def visualize_kernel(self, phi : ti.template(), cell_type : ti.template()):
         for i, j in self.color_buffer:
             x, y = self.ij_to_xy(i, j)
@@ -75,6 +83,10 @@ class Visualizer2D:
             psi = simulator.psi.to_numpy()
             max_psi, min_psi = float(np.max(psi)), float(np.min(psi))
             self.fill_psi(simulator.psi, min_psi, max_psi)
+        elif self.mode == 'kappa':
+            kappa = simulator.surface_tension.kappa.to_numpy()
+            max_kappa, min_kappa = float(np.max(kappa)), float(np.min(kappa))
+            self.fill_kappa(simulator.surface_tension.kappa, min_kappa, max_kappa)
 
     def visualize(self, simulator):
         assert 0, 'Please use GUIVisualizer2D/VideoVisualizer2D'
