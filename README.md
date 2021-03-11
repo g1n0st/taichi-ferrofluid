@@ -1,6 +1,8 @@
  # taichi_ferrofluid
 Implementation of *A Level-Set Method for Magnetic Substance Simulation* in the Taichi language.
 
+**The fluid part is finished, magnetic force part is still an arduous work in progress.**
+
 Running the Demo
 ----------------
 
