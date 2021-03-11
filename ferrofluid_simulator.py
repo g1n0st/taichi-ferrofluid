@@ -27,7 +27,7 @@ class FerrofluidSimulator(FluidSimulator):
         gravity = [0, -9.8],
         p0 = 1e-3,
         mu0 = 4 * ts.pi * 1e-7,
-        k = 0.33,
+        k = 5,
         real = float):
             super().__init__(dim, res, dt, substeps, dx, rho, gravity, p0, real)
 
@@ -58,7 +58,15 @@ class FerrofluidSimulator(FluidSimulator):
                                                                  self.p0,
                                                                  self.mu0,
                                                                  self.k,
-                                                                 self.H)
+                                                                 self.H,
+                                                                 self)
+
+    @ti.func
+    def H_interp(self, I):
+        H = ti.Vector.zero(self.real, self.dim)
+        for k in ti.static(range(self.dim)):
+            H[k] = utils.sample(self.H[k], I - 0.5 * (1 - ti.Vector.unit(self.dim, k)))
+        return H
 
     @ti.kernel
     def update_magnetic_susceptibility(self):
@@ -72,7 +80,7 @@ class FerrofluidSimulator(FluidSimulator):
         end1 = time.perf_counter()
 
         start2 = time.perf_counter()
-        self.poisson_solver.solve(self.iterations, self.verbose)
+        self.poisson_solver.solve(self.iterations, self.verbose, 1e-18)
         end2 = time.perf_counter()
 
         print(f'\033[33msolve Psi, init cost {end1 - start1}s, solve cost {end2 - start2}s\033[0m')
@@ -114,15 +122,17 @@ class FerrofluidSimulator(FluidSimulator):
                 if self.is_fluid(I_1) or self.is_fluid(I):
                     if self.is_solid(I_1) or self.is_solid(I): self.velocity[k][I] = 0
                     # FLuid-Air
-                    elif self.is_air(I): 
+                    elif self.is_air(I):
+                        H = self.H_interp(I + 0.5)
                         self.velocity[k][I] -= scale * ( \
-                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I_1] ** 2) \
+                            (self.p0 + 1/2 * self.k * self.mu0 * H.dot(H)) \
                             - self.pressure[I_1])
                     # Air-Fluid
                     elif self.is_air(I_1):
+                        H = self.H_interp(I_1 + 0.5)
                         self.velocity[k][I] -= scale * ( \
                             self.pressure[I] - \
-                            (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I] ** 2))
+                            (self.p0 + 1/2 * self.k * self.mu0 * H.dot(H)))
                     # Fluid-Fluid
                     else: self.velocity[k][I] -= scale * (self.pressure[I] - self.pressure[I_1])
 

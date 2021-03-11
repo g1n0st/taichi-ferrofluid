@@ -6,12 +6,13 @@ import utils
 @ti.data_oriented
 class MagneticForceStrategy(PressureProjectStrategy):
     def __init__(self, dim, velocity, ghost_fluid_method, phi, p0,
-                 mu0, k, H):
+                 mu0, k, H, simulator):
         super().__init__(dim, velocity, ghost_fluid_method, phi, p0)
         
         self.mu0 = mu0
         self.k = k
         self.H = H
+        self.simulator = simulator
 
     @ti.kernel
     def build_b_kernel(self, 
@@ -33,6 +34,6 @@ class MagneticForceStrategy(PressureProjectStrategy):
                             if s < 0: b[I] -= self.scale_b * (self.velocity[k][I] - 0)
                             else: b[I] += self.scale_b * (self.velocity[k][I + offset] - 0)
                         elif cell_type[I + offset] == utils.AIR:
-                            if s < 0: b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I] ** 2)
-                            else: b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * self.H[k][I + offset] ** 2)
-                            
+                            H = self.simulator.H_interp(I + offset + 0.5)
+                            b[I] += self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * H.dot(H))
+                            self.scale_A * (self.p0 + 1/2 * self.k * self.mu0 * H.dot(H))
